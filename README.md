@@ -79,16 +79,22 @@ Create a `.env` file in the project root directory.
 
 ```
 PORT=5000
-NODE_ENV=development
+NODE_ENV=production
+CLIENT_URL=http://localhost:5173
 
-DATABASE_URL=your_database_connection_string
+MONGO_URI=mongodb+srv://smanishwar6_db_user:rrBS0fGRP2vHu6RK@cluster0.xs6h3bb.mongodb.net/?appName=Cluster0
 
-JWT_SECRET=your_jwt_secret
-JWT_EXPIRES_IN=7d
+UPSTASH_REDIS_URL=redis://127.0.0.1:6379
 
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_PASSWORD=
+ACCESS_TOKEN_SECRET=sdfaehfu8r32aw783k4jkjk@!kjhwer
+REFRESH_TOKEN_SECRET=2eoi3n@oweuf89a7Ln3uaksduhfa-w
+
+
+# mongodb+srv://smanishwar6_db_user:<db_password>@cluster0.ziuuaup.mongodb.net/?appName=Cluster0
+
+# rrBS0fGRP2vHu6RK
+
+
 ```
 
 Important:
