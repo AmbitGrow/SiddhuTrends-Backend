@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.route.js";
+import productRoutes from "./routes/product.routes.js";
 import cookieParser from "cookie-parser";
 dotenv.config();
 
@@ -12,7 +13,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
 app.use("/api/auth", authRoutes);
-
+app.use("/api", productRoutes);
 
 
 app.listen(PORT, () => {
