@@ -34,12 +34,6 @@ router.get(
   adminRoute,
   getProductByIdAdmin
 );
-router.patch(
-  "/admin/products/:productId/status",
-  protectRoute,
-  adminRoute,
-  toggleProductStatus
-);
 
 // USER (public)
 router.get("/products", listProducts);
