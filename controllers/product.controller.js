@@ -1,5 +1,6 @@
 import Product from "../models/product.model.js";
-
+import Category from "../models/category.model.js";
+import AgeGroup from "../models/ageGroup.model.js";
 // =============== CREATE PRODUCT (ADMIN) ===============
 export const createProduct = async (req, res) => {
   try {
@@ -22,6 +23,47 @@ export const createProduct = async (req, res) => {
         message: "Required fields missing",
       });
     }
+
+    // Numeric validations (safe checks for optional investmentCost)
+    if (
+      price < 0 ||
+      stock < 0 ||
+      (investmentCost != null && investmentCost < 0)
+    ) {
+      return res.status(400).json({
+        message: "Price, investmentCost and stock must be >= 0",
+      });
+    }
+
+    // Validate category
+    const category = await Category.findOne({
+      _id: categoryId,
+      isActive: true,
+    });
+
+    if (!category) {
+      return res.status(400).json({
+        message: "Invalid or inactive category",
+      });
+    }
+
+    // Validate age group
+    const ageGroup = await AgeGroup.findOne({
+      _id: ageGroupId,
+      isActive: true,
+    });
+
+    if (!ageGroup) {
+      return res.status(400).json({
+        message: "Invalid or inactive age group",
+      });
+    }
+if (!ageGroup) {
+  return res.status(400).json({
+    message: "Invalid or inactive age group"
+  });
+}
+
 
     if (price < 0 || investmentCost < 0 || stock < 0) {
       return res.status(400).json({
@@ -64,8 +106,37 @@ export const updateProduct = async (req, res) => {
     }
 
     const updates = req.body;
+    if (updates.categoryId) {
+  const category = await Category.findOne({
+    _id: updates.categoryId,
+    isActive: true
+  });
 
-    if (updates.price < 0 || updates.investmentCost < 0) {
+  if (!category) {
+    return res.status(400).json({
+      message: "Invalid or inactive category"
+    });
+  }
+}
+
+if (updates.ageGroupId) {
+  const ageGroup = await AgeGroup.findOne({
+    _id: updates.ageGroupId,
+    isActive: true
+  });
+
+  if (!ageGroup) {
+    return res.status(400).json({
+      message: "Invalid or inactive age group"
+    });
+  }
+}
+
+
+    if (
+      (updates.price != null && updates.price < 0) ||
+      (updates.investmentCost != null && updates.investmentCost < 0)
+    ) {
       return res
         .status(400)
         .json({ message: "Price & investmentCost must be >= 0" });
