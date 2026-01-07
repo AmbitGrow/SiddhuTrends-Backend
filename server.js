@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.route.js";
 import productRoutes from "./routes/product.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
 import { seedAgeGroups } from "./seed/ageGroup.seed.js";
 import categoryroutes from "./routes/category.routes.js";
 import agegroouproutes from "./routes/ageGroup.routes.js";
@@ -17,6 +18,7 @@ app.use(cookieParser());
 
 app.use("/api/auth", authRoutes);
 app.use("/api", productRoutes);
+app.use("/api", adminRoutes);
 app.use("/api", categoryroutes);
 app.use("/api", agegroouproutes);
 
