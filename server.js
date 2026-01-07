@@ -4,6 +4,9 @@ import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.route.js";
 import productRoutes from "./routes/product.routes.js";
 import cartRoutes from "./routes/cart.routes.js";
+import { seedAgeGroups } from "./seed/ageGroup.seed.js";
+import categoryroutes from "./routes/category.routes.js";
+import agegroouproutes from "./routes/ageGroup.routes.js";
 import cookieParser from "cookie-parser";
 dotenv.config();
 
@@ -15,11 +18,14 @@ app.use(cookieParser());
 
 app.use("/api/auth", authRoutes);
 app.use("/api", productRoutes);
-app.use("/api", cartRoutes);
+app.use("/api", cartRoutes);app.use("/api", categoryroutes);
+app.use("/api", agegroouproutes);
 
-app.listen(PORT, () => {
+
+app.listen(PORT, async() => {
 	console.log("Server is running on http://localhost:" + PORT);
-	connectDB();
+	await connectDB();
+	await seedAgeGroups();
 });
 
 
