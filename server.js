@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.route.js";
 import productRoutes from "./routes/product.routes.js";
+import { seedAgeGroups } from "./seed/ageGroup.seed.js";
 import cookieParser from "cookie-parser";
 dotenv.config();
 
@@ -16,9 +17,10 @@ app.use("/api/auth", authRoutes);
 app.use("/api", productRoutes);
 
 
-app.listen(PORT, () => {
+app.listen(PORT, async() => {
 	console.log("Server is running on http://localhost:" + PORT);
-	connectDB();
+	await connectDB();
+	await seedAgeGroups();
 });
 
 
