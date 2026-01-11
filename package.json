@@ -27,7 +27,8 @@
     "ioredis": "^5.8.2",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.0.0",
-    "mongoose": "^9.1.1"
+    "mongoose": "^9.1.1",
+    "razorpay": "^2.9.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
