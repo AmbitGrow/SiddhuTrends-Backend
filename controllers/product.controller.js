@@ -1,7 +1,102 @@
 import Product from "../models/product.model.js";
 import Category from "../models/category.model.js";
 import AgeGroup from "../models/ageGroup.model.js";
+import Inventory from "../models/inventory.model.js";
+
+
 // =============== CREATE PRODUCT (ADMIN) ===============
+// export const createProduct = async (req, res) => {
+//   try {
+//     const {
+//       name,
+//       description,
+//       images,
+//       price,
+//       investmentCost,
+//       categoryId,
+//       ageGroupId,
+//       stock,
+//       isBestSeller,
+//       isOffer,
+//     } = req.body;
+
+//     // Required field validation
+//     if (!name || price == null || stock == null || !categoryId || !ageGroupId) {
+//       return res.status(400).json({
+//         message: "Required fields missing",
+//       });
+//     }
+
+//     // Numeric validations (safe checks for optional investmentCost)
+//     if (
+//       price < 0 ||
+//       stock < 0 ||
+//       (investmentCost != null && investmentCost < 0)
+//     ) {
+//       return res.status(400).json({
+//         message: "Price, investmentCost and stock must be >= 0",
+//       });
+//     }
+
+//     // Validate category
+//     const category = await Category.findOne({
+//       _id: categoryId,
+//       isActive: true,
+//     });
+
+//     if (!category) {
+//       return res.status(400).json({
+//         message: "Invalid or inactive category",
+//       });
+//     }
+
+//     // Validate age group
+//     const ageGroup = await AgeGroup.findOne({
+//       _id: ageGroupId,
+//       isActive: true,
+//     });
+
+//     if (!ageGroup) {
+//       return res.status(400).json({
+//         message: "Invalid or inactive age group",
+//       });
+//     }
+// if (!ageGroup) {
+//   return res.status(400).json({
+//     message: "Invalid or inactive age group"
+//   });
+// }
+
+
+//     if (price < 0 || investmentCost < 0 || stock < 0) {
+//       return res.status(400).json({
+//         message: "Price, investmentCost and stock must be >= 0",
+//       });
+//     }
+
+//     const product = await Product.create({
+//       name,
+//       description,
+//       images: images || [],
+//       price,
+//       investmentCost,
+//       categoryId,
+//       ageGroupId,
+//       stock,
+//       isBestSeller: isBestSeller || false,
+//       isOffer: isOffer || false,
+//     });
+
+//     res.status(201).json({
+//       message: "Product created successfully",
+//       product,
+//     });
+//   } catch (err) {
+//     console.error("Create Product Error:", err);
+//     res.status(500).json({ message: "Failed to create product" });
+//   }
+// };
+
 export const createProduct = async (req, res) => {
   try {
     const {
@@ -24,7 +119,6 @@ export const createProduct = async (req, res) => {
       });
     }
 
-    // Numeric validations (safe checks for optional investmentCost)
     if (
       price < 0 ||
       stock < 0 ||
@@ -35,42 +129,27 @@ export const createProduct = async (req, res) => {
       });
     }
 
-    // Validate category
     const category = await Category.findOne({
       _id: categoryId,
       isActive: true,
     });
-
     if (!category) {
       return res.status(400).json({
         message: "Invalid or inactive category",
       });
     }
 
-    // Validate age group
     const ageGroup = await AgeGroup.findOne({
       _id: ageGroupId,
       isActive: true,
     });
-
     if (!ageGroup) {
       return res.status(400).json({
         message: "Invalid or inactive age group",
       });
     }
-if (!ageGroup) {
-  return res.status(400).json({
-    message: "Invalid or inactive age group"
-  });
-}
 
-
-    if (price < 0 || investmentCost < 0 || stock < 0) {
-      return res.status(400).json({
-        message: "Price, investmentCost and stock must be >= 0",
-      });
-    }
-
+    // ✅ CREATE PRODUCT
     const product = await Product.create({
       name,
       description,
@@ -84,13 +163,21 @@ if (!ageGroup) {
       isOffer: isOffer || false,
     });
 
-    res.status(201).json({
+    // ✅ CREATE INVENTORY FOR THIS PRODUCT
+    await Inventory.create({
+      productId: product._id,
+      totalStock: stock,
+      reservedStock: 0
+    });
+
+    return res.status(201).json({
       message: "Product created successfully",
       product,
     });
+
   } catch (err) {
     console.error("Create Product Error:", err);
-    res.status(500).json({ message: "Failed to create product" });
+    return res.status(500).json({ message: err.message });
   }
 };
 

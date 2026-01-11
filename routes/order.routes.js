@@ -1,11 +1,15 @@
-const express = require("express");
+import express from "express";
+import {
+  createOrderIntent,
+  startPayment,
+  getMyOrders
+} from "../controllers/order.controller.js";
+import {protectRoute} from "../middleware/auth.middleware.js";
+
 const router = express.Router();
-const { createOrder } = require("../controllers/order.controller");
-const protectRoute = require("../middlewares/auth");
 
-router.post("/", protectRoute, createOrder);
-router.get("/my", protectRoute, getMyOrders);
-router.get("/admin/", protectRoute, adminRoute, getAllOrders);
+router.post("/", protectRoute, createOrderIntent);
+router.post("/:orderIntentId/pay", protectRoute, startPayment);
+router.get("/", protectRoute, getMyOrders);
 
-
-module.exports = router;
+export default router;

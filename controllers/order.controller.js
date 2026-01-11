@@ -1,79 +1,166 @@
-const Order = require("../models/order.model");
-const Cart = require("../models/Cart");
-const Product = require("../models/Product");
-const generateOrderNumber = require("../utils/generateOrderNumber");
+import OrderIntent from "../models/orderIntent.model.js";
+import OrderItem from "../models/orderItem.model.js";
+import Order from "../models/order.model.js";
+import Product from "../models/product.model.js";
 
-exports.createOrder = async (req, res, next) => {
+import { reserveStock } from "../services/inventory.service.js";
+import { transitionOrderIntent } from "../domain/orderIntent.state.js";
+
+/**
+ * CREATE ORDER INTENT (Buy Now / Cart Checkout)
+ * This does NOT create a final order.
+ */
+export const createOrderIntent = async (req, res) => {
   try {
     const userId = req.user._id;
+    const { items } = req.body;
+    // items = [{ productId, quantity }]
 
-    // 1. Fetch cart
-    const cart = await Cart.findOne({ userId }).populate("items.productId");
-
-    if (!cart || cart.items.length === 0) {
-      return res.status(400).json({ success: false, message: "Cart is empty" });
+    if (!items || items.length === 0) {
+      return res.status(400).json({ message: "No items provided" });
     }
 
+    // 1️⃣ Fetch products
+    const products = await Product.find({
+      _id: { $in: items.map(i => i.productId) },
+      isActive: true
+    });
+
+    if (products.length !== items.length) {
+      return res.status(400).json({ message: "Invalid or inactive product" });
+    }
+
+    // 2️⃣ Create product lookup
+    const productMap = new Map();
+    products.forEach(p => productMap.set(p._id.toString(), p));
+
+    // 3️⃣ Price calculation
     let subtotal = 0;
-    let items = [];
+    let gstAmount = 0;
 
-    // 2. Validate stock & calculate pricing
-    for (const cartItem of cart.items) {
-      const product = cartItem.productId;
+    const GST_RATE = 0.18; // 18%
 
-      if (product.stock < cartItem.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${product.name}`
-        });
+    for (const item of items) {
+      const product = productMap.get(item.productId.toString());
+
+      if (item.quantity <= 0) {
+        return res.status(400).json({ message: "Invalid quantity" });
       }
 
-      subtotal += product.price * cartItem.quantity;
+      const basePrice = product.price * item.quantity;
+      const gst = basePrice * GST_RATE;
 
-      items.push({
+      subtotal += basePrice;
+      gstAmount += gst;
+    }
+
+    // 4️⃣ Delivery charge logic
+    const deliveryCharge = subtotal >= 1000 ? 0 : 50;
+    const totalAmount = subtotal + gstAmount + deliveryCharge;
+
+    // 5️⃣ Create OrderIntent
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+
+    const orderIntent = await OrderIntent.create({
+      userId,
+      status: "CREATED",
+      subtotal,
+      gstAmount,
+      deliveryCharge,
+      totalAmount,
+      expiresAt
+    });
+
+    // 6️⃣ Create OrderItem snapshots
+    const orderItems = items.map(item => {
+      const product = productMap.get(item.productId.toString());
+
+      return {
+        orderIntentId: orderIntent._id,
         productId: product._id,
-        name: product.name,
-        price: product.price,
-        quantity: cartItem.quantity,
-        investmentCost: product.investmentCost
+        quantity: item.quantity,
+        priceAtPurchase: product.price,
+        gstRateAtPurchase: GST_RATE
+      };
+    });
+
+    await OrderItem.insertMany(orderItems);
+
+    // 7️⃣ Reserve stock (transactional)
+    await reserveStock({
+      orderIntent,
+      items
+    });
+
+    // 8️⃣ Move intent → PAYMENT_IN_PROGRESS
+    orderIntent.status = transitionOrderIntent(
+      orderIntent.status,
+      "PAYMENT_IN_PROGRESS"
+    );
+    await orderIntent.save();
+
+    return res.status(201).json({
+      message: "Order intent created",
+      orderIntentId: orderIntent._id,
+      totalAmount,
+      expiresAt
+    });
+
+  } catch (error) {
+    console.error("Create OrderIntent Error:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * START PAYMENT
+ * This only hands off to Payment Service (Dev B)
+ */
+export const startPayment = async (req, res) => {
+  try {
+    const { orderIntentId } = req.params;
+
+    const orderIntent = await OrderIntent.findById(orderIntentId);
+
+    if (!orderIntent) {
+      return res.status(404).json({ message: "OrderIntent not found" });
+    }
+
+    if (orderIntent.status !== "PAYMENT_IN_PROGRESS") {
+      return res.status(400).json({
+        message: "Order is not ready for payment"
       });
     }
 
-    const deliveryCharge = 50; // temp static
-    const totalAmount = subtotal + deliveryCharge;
+    // Here you would call Payment Service API (Dev B)
+    // Example:
+    // await paymentService.createPayment(orderIntentId, orderIntent.totalAmount)
 
-    // 3. Create order
-    const order = await Order.create({
-      orderNumber: generateOrderNumber(),
-      userId,
-      items,
-      pricing: {
-        subtotal,
-        deliveryCharge,
-        totalAmount,
-        profit: 0 // calculated later
-      },
-      payment: {
-        method: "online",
-        status: "pending"
-      },
-      addressSnapshot: cart.addressSnapshot // assuming saved in cart
+    return res.json({
+      message: "Payment initiated",
+      orderIntentId,
+      amount: orderIntent.totalAmount
     });
 
-    // 4. Clear cart
-    cart.items = [];
-    await cart.save();
+  } catch (error) {
+    console.error("Start Payment Error:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
 
-    return res.status(201).json({
-      success: true,
-      data: {
-        orderId: order._id,
-        orderNumber: order.orderNumber,
-        amount: totalAmount
-      }
-    });
+/**
+ * GET USER ORDERS (FINAL CONFIRMED ORDERS ONLY)
+ */
+export const getMyOrders = async (req, res) => {
+  try {
+    const userId = req.user._id;
 
-  } catch (err) {
-    next(err);
+    const orders = await Order.find({ userId })
+      .sort({ confirmedAt: -1 });
+
+    return res.json(orders);
+  } catch (error) {
+    console.error("Get Orders Error:", error);
+    return res.status(500).json({ message: error.message });
   }
 };
