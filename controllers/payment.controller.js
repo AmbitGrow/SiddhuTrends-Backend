@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import razorpay from "../config/razorpay.js";
 import Payment from "../models/payment.model.js";
 import OrderIntent from "../models/orderIntent.model.js"; // assumed
@@ -78,4 +79,108 @@ export const initiatePayment = async (req, res) => {
     console.error("Initiate Payment Error:", error);
     res.status(500).json({ message: "Failed to initiate payment" });
   }
+};
+
+export const verifyPayment = async (req,res) => {
+    try{
+        const{
+            razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature
+        }= req.body;
+
+        if(
+            !razorpay_order_id||
+            !razorpay_payment_id||
+            !razorpay_signature
+        ){
+            return res.status(400).json({
+                message:"Missing payment verification fields"
+            });
+        }
+
+        const payment = await Payment.findOne({
+  gatewayOrderId: razorpay_order_id
+});
+
+if (!payment) {
+  return res.status(404).json({
+    message: "Payment record not found"
+  });
+}
+
+if (payment.paymentStatus === "SUCCESS") {
+  return res.json({
+    message: "Payment already verified"
+  });
+}
+
+if (payment.paymentStatus === "FAILED") {
+  return res.status(400).json({
+    message: "Payment already failed"
+  });
+}
+
+const generatedSignature = crypto
+  .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+  .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+  .digest("hex");
+
+if (generatedSignature !== razorpay_signature) {
+  payment.paymentStatus = "FAILED";
+  await payment.save();
+
+  return res.status(400).json({
+    message: "Invalid payment signature"
+  });
+}
+
+const razorpayPayment = await razorpay.payments.fetch(
+  razorpay_payment_id
+);
+
+if (!razorpayPayment || razorpayPayment.status !== "captured") {
+  payment.paymentStatus = "FAILED";
+  await payment.save();
+
+  return res.status(400).json({
+    message: "Payment not captured"
+  });
+}
+
+const paidAmount = razorpayPayment.amount / 100;
+
+if (paidAmount !== payment.expectedAmount) {
+  payment.paymentStatus = "FAILED";
+  await payment.save();
+
+  return res.status(400).json({
+    message: "Payment amount mismatch"
+  });
+}
+
+payment.gatewayPaymentId = razorpay_payment_id;
+payment.paidAmount = paidAmount;
+payment.paymentStatus = "SUCCESS";
+payment.verifiedAt = new Date();
+
+await payment.save();
+
+console.log("PAYMENT_VERIFIED", {
+  orderIntentId: payment.orderIntentId.toString(),
+  amount: paidAmount,
+  paymentType: payment.paymentType
+});
+
+return res.json({
+  message: "Payment verified successfully"
+});
+
+    }
+        catch(error){
+            console.error("Verify Payment Error:", error);
+            return res.status(500).json({
+                message: "Payment verification failed"
+            });
+        }
 };
