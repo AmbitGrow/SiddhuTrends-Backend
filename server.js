@@ -6,6 +6,7 @@ import productRoutes from "./routes/product.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import cartRoutes from "./routes/cart.routes.js";
 import { seedAgeGroups } from "./seed/ageGroup.seed.js";
+import paymentRoutes from "./routes/payment.routes.js";
 import categoryRoutes from "./routes/category.routes.js";
 import ageGroupRoutes from "./routes/ageGroup.routes.js";
 import cookieParser from "cookie-parser";
@@ -23,6 +24,7 @@ app.use("/api", adminRoutes);
 app.use("/api", categoryRoutes);
 app.use("/api", cartRoutes);
 app.use("/api", ageGroupRoutes);
+app.use("/api",paymentRoutes);
 
 
 app.listen(PORT, async() => {
