@@ -2,6 +2,7 @@ import crypto from "crypto";
 import razorpay from "../config/razorpay.js";
 import Payment from "../models/payment.model.js";
 import OrderIntent from "../models/orderIntent.model.js"; // assumed
+import WebhookEvent from "../models/webhookEvent.model.js";
 
 const ADVANCE_AMOUNT = 199; // fixed advance (LOCKED)
 
@@ -81,106 +82,176 @@ export const initiatePayment = async (req, res) => {
   }
 };
 
-export const verifyPayment = async (req,res) => {
-    try{
-        const{
-            razorpay_order_id,
+const verifyPaymentInternal = async (
+  razorpay_order_id,
+  razorpay_payment_id,
+  razorpay_signature = null // webhook may not send signature
+) => {
+
+  const payment = await Payment.findOne({
+    gatewayOrderId: razorpay_order_id
+  });
+
+  if (!payment) {
+    throw new Error("Payment record not found");
+  }
+
+  if (payment.paymentStatus === "SUCCESS") {
+    return payment;
+  }
+
+  if (payment.paymentStatus === "FAILED") {
+    throw new Error("Payment already failed");
+  }
+
+  // If signature provided → verify (API call case)
+  if (razorpay_signature) {
+    const generatedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    if (generatedSignature !== razorpay_signature) {
+      payment.paymentStatus = "FAILED";
+      await payment.save();
+      throw new Error("Invalid payment signature");
+    }
+  }
+
+  // Fetch from Razorpay
+  const razorpayPayment = await razorpay.payments.fetch(
+    razorpay_payment_id
+  );
+
+  if (!razorpayPayment || razorpayPayment.status !== "captured") {
+    payment.paymentStatus = "FAILED";
+    await payment.save();
+    throw new Error("Payment not captured");
+  }
+
+  const paidAmount = razorpayPayment.amount / 100;
+
+  if (paidAmount !== payment.expectedAmount) {
+    payment.paymentStatus = "FAILED";
+    await payment.save();
+    throw new Error("Payment amount mismatch");
+  }
+
+  payment.gatewayPaymentId = razorpay_payment_id;
+  payment.paidAmount = paidAmount;
+  payment.paymentStatus = "SUCCESS";
+  payment.verifiedAt = new Date();
+
+  await payment.save();
+
+  console.log("PAYMENT_VERIFIED", {
+    orderIntentId: payment.orderIntentId.toString(),
+    amount: paidAmount,
+    paymentType: payment.paymentType
+  });
+
+  return payment;
+};
+
+
+export const verifyPayment = async (req, res) => {
+  try {
+    const {
+      razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature
-        }= req.body;
+    } = req.body;
 
-        if(
-            !razorpay_order_id||
-            !razorpay_payment_id||
-            !razorpay_signature
-        ){
-            return res.status(400).json({
-                message:"Missing payment verification fields"
-            });
-        }
-
-        const payment = await Payment.findOne({
-  gatewayOrderId: razorpay_order_id
-});
-
-if (!payment) {
-  return res.status(404).json({
-    message: "Payment record not found"
-  });
-}
-
-if (payment.paymentStatus === "SUCCESS") {
-  return res.json({
-    message: "Payment already verified"
-  });
-}
-
-if (payment.paymentStatus === "FAILED") {
-  return res.status(400).json({
-    message: "Payment already failed"
-  });
-}
-
-const generatedSignature = crypto
-  .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-  .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-  .digest("hex");
-
-if (generatedSignature !== razorpay_signature) {
-  payment.paymentStatus = "FAILED";
-  await payment.save();
-
-  return res.status(400).json({
-    message: "Invalid payment signature"
-  });
-}
-
-const razorpayPayment = await razorpay.payments.fetch(
-  razorpay_payment_id
-);
-
-if (!razorpayPayment || razorpayPayment.status !== "captured") {
-  payment.paymentStatus = "FAILED";
-  await payment.save();
-
-  return res.status(400).json({
-    message: "Payment not captured"
-  });
-}
-
-const paidAmount = razorpayPayment.amount / 100;
-
-if (paidAmount !== payment.expectedAmount) {
-  payment.paymentStatus = "FAILED";
-  await payment.save();
-
-  return res.status(400).json({
-    message: "Payment amount mismatch"
-  });
-}
-
-payment.gatewayPaymentId = razorpay_payment_id;
-payment.paidAmount = paidAmount;
-payment.paymentStatus = "SUCCESS";
-payment.verifiedAt = new Date();
-
-await payment.save();
-
-console.log("PAYMENT_VERIFIED", {
-  orderIntentId: payment.orderIntentId.toString(),
-  amount: paidAmount,
-  paymentType: payment.paymentType
-});
-
-return res.json({
-  message: "Payment verified successfully"
-});
-
+    if (
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
+      return res.status(400).json({
+        message: "Missing payment verification fields"
+      });
     }
-        catch(error){
-            console.error("Verify Payment Error:", error);
-            return res.status(500).json({
-                message: "Payment verification failed"
-            });
-        }
+
+    await verifyPaymentInternal(
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature
+    );
+
+    return res.json({
+      message: "Payment verified successfully"
+    });
+
+  } catch (error) {
+    console.error("Verify Payment Error:", error);
+    return res.status(500).json({
+      message: "Payment verification failed"
+    });
+  }
+};
+
+
+export const razorpayWebhook = async (req, res) => {
+  try {
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const receivedSignature = req.headers["x-razorpay-signature"];
+    const eventId = req.headers["x-razorpay-event-id"];
+    if (!eventId) {
+      return res.status(400).json({ message: "Missing event id" });
+    }
+
+    const existingEvent = await WebhookEvent.findOne({ eventId });
+    if (existingEvent) {
+      console.log("Duplicate webhook ignored:", eventId);
+      return res.json({ status: "duplicate_ignored" });
+    }
+
+    if (!secret || !receivedSignature) {
+      return res.status(400).json({ message: "Invalid webhook signature" });
+    }
+
+    const body = req.body;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(body)
+      .digest("hex");
+
+    if (expectedSignature !== receivedSignature) {
+      return res.status(400).json({ message: "Invalid webhook signature" });
+    }
+
+    const event = JSON.parse(body.toString());
+    const paymentEntity = event.payload.payment.entity;
+
+    const razorpay_order_id = paymentEntity.order_id;
+    const razorpay_payment_id = paymentEntity.id;
+
+    if (event.event === "payment.captured") {
+      // reuse your verification logic
+      await verifyPaymentInternal(razorpay_order_id, razorpay_payment_id);
+    }
+
+    if (event.event === "payment.failed") {
+      console.log("PAYMENT_FAILED", razorpay_payment_id);
+    }
+
+    try {
+      await WebhookEvent.create({
+        eventId,
+        eventType: event.event
+      });
+    } catch (err) {
+      if (err.code === 11000) {
+        console.log("Duplicate webhook race condition handled:", eventId);
+        return res.json({ status: "duplicate_race_ignored" });
+      }
+      throw err;
+    }
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    console.error("Webhook Error:", err);
+    res.status(500).json({ message: "Webhook handling failed" });
+  }
 };

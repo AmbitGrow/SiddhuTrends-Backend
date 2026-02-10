@@ -15,7 +15,12 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(express.json({ limit: "10mb" })); 
+app.use(
+	"/api/payments/webhook",
+	express.raw({ type: "application/json" })
+);
+
+app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
 app.use("/api/auth", authRoutes);
@@ -24,7 +29,7 @@ app.use("/api", adminRoutes);
 app.use("/api", categoryRoutes);
 app.use("/api", cartRoutes);
 app.use("/api", ageGroupRoutes);
-app.use("/api",paymentRoutes);
+app.use("/api", paymentRoutes);
 
 
 app.listen(PORT, async() => {
