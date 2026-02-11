@@ -9,7 +9,9 @@ import { seedAgeGroups } from "./seed/ageGroup.seed.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import categoryRoutes from "./routes/category.routes.js";
 import ageGroupRoutes from "./routes/ageGroup.routes.js";
+import debugRoutes from "./routes/debug.routes.js";
 import cookieParser from "cookie-parser";
+import "./services/orderPaymentListener.js";
 dotenv.config();
 
 const app = express();
@@ -30,6 +32,7 @@ app.use("/api", categoryRoutes);
 app.use("/api", cartRoutes);
 app.use("/api", ageGroupRoutes);
 app.use("/api", paymentRoutes);
+app.use("/api/debug", debugRoutes);
 
 
 app.listen(PORT, async() => {

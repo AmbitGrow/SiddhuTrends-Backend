@@ -3,6 +3,8 @@ import razorpay from "../config/razorpay.js";
 import Payment from "../models/payment.model.js";
 import OrderIntent from "../models/orderIntent.model.js"; // assumed
 import WebhookEvent from "../models/webhookEvent.model.js";
+import { logPaymentAudit } from "../utils/paymentAuditLogger.js";
+import { paymentEventEmitter } from "../utils/paymentEvents.js";
 
 const ADVANCE_AMOUNT = 199; // fixed advance (LOCKED)
 
@@ -61,12 +63,19 @@ export const initiatePayment = async (req, res) => {
     });
 
     // 5️⃣ Create Payment record
-    await Payment.create({
+    const newPayment = await Payment.create({
       orderIntentId,
       paymentType,
       gatewayOrderId: razorpayOrder.id,
       expectedAmount: expectedAmountNumber,
       paymentStatus: "PENDING"
+    });
+
+    await logPaymentAudit({
+      payment: newPayment,
+      fromStatus: null,
+      toStatus: "PENDING",
+      source: "INITIATE_API"
     });
 
     // 6️⃣ Send payload to frontend
@@ -114,6 +123,12 @@ const verifyPaymentInternal = async (
     if (generatedSignature !== razorpay_signature) {
       payment.paymentStatus = "FAILED";
       await payment.save();
+      await logPaymentAudit({
+        payment,
+        fromStatus: "PENDING",
+        toStatus: "FAILED",
+        source: "VERIFY_API"
+      });
       throw new Error("Invalid payment signature");
     }
   }
@@ -126,6 +141,12 @@ const verifyPaymentInternal = async (
   if (!razorpayPayment || razorpayPayment.status !== "captured") {
     payment.paymentStatus = "FAILED";
     await payment.save();
+    await logPaymentAudit({
+      payment,
+      fromStatus: "PENDING",
+      toStatus: "FAILED",
+      source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
+    });
     throw new Error("Payment not captured");
   }
 
@@ -134,6 +155,12 @@ const verifyPaymentInternal = async (
   if (paidAmount !== payment.expectedAmount) {
     payment.paymentStatus = "FAILED";
     await payment.save();
+    await logPaymentAudit({
+      payment,
+      fromStatus: "PENDING",
+      toStatus: "FAILED",
+      source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
+    });
     throw new Error("Payment amount mismatch");
   }
 
@@ -144,9 +171,24 @@ const verifyPaymentInternal = async (
 
   await payment.save();
 
+  await logPaymentAudit({
+    payment,
+    fromStatus: "PENDING",
+    toStatus: "SUCCESS",
+    source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
+  });
+
   console.log("PAYMENT_VERIFIED", {
     orderIntentId: payment.orderIntentId.toString(),
     amount: paidAmount,
+    paymentType: payment.paymentType
+  });
+
+  console.log("🚀 Emitting PAYMENT_VERIFIED event");
+  paymentEventEmitter.emit("PAYMENT_VERIFIED", {
+    orderIntentId: payment.orderIntentId.toString(),
+    paymentId: payment._id.toString(),
+    amount: payment.paidAmount,
     paymentType: payment.paymentType
   });
 

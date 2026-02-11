@@ -47,6 +47,12 @@ const paymentSchema = new mongoose.Schema(
       index: true
     },
 
+    refundStatus: {
+      type: String,
+      enum: ["NONE", "REQUESTED", "PROCESSED"],
+      default: "NONE"
+    },
+
     verifiedAt: {
       type: Date
     }
