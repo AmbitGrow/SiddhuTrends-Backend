@@ -6,36 +6,82 @@ import {
   updateProduct,
   getAllProductsAdmin,
   getProductByIdAdmin,
-  updateProductStock
-} from "../controllers/adminProduct.controller.js";
+  updateProductStock,
+} from "../controllers/product.controller.js";
+
+import {
+  createCategory,
+  getAllCategoriesAdmin,
+  updateCategory,
+  toggleCategoryStatus,
+} from "../controllers/category.controller.js";
+
+import {
+  createAgeGroup,
+  getAllAgeGroupsAdmin,
+  updateAgeGroup,
+  toggleAgeGroupStatus
+} from "../controllers/ageGroup.controller.js";
 
 const router = express.Router();
 
-// PRODUCT — ADMIN APIs
-router.post("/admin/products", protectRoute, adminRoute, createProduct);
 
-router.put("/admin/products/:productId",
+router.post("/products", protectRoute, adminRoute, createProduct);
+router.put(
+  "/products/:productId",
   protectRoute,
   adminRoute,
-  updateProduct
+  updateProduct,
+);
+router.get("/products", protectRoute, adminRoute, getAllProductsAdmin);
+router.get(
+  "/products/:productId",
+  protectRoute,
+  adminRoute,
+  getProductByIdAdmin,
+);
+router.patch(
+  "/products/:productId/stock",
+  protectRoute,
+  adminRoute,
+  updateProductStock,
 );
 
-router.get("/admin/products",
+
+router.post("/categories", protectRoute, adminRoute, createCategory);
+router.get(
+  "/categories",
   protectRoute,
   adminRoute,
-  getAllProductsAdmin
+  getAllCategoriesAdmin,
+);
+router.put(
+  "/categories/:categoryId",
+  protectRoute,
+  adminRoute,
+  updateCategory,
+);
+router.patch(
+  "/categories/:categoryId/status",
+  protectRoute,
+  adminRoute,
+  toggleCategoryStatus,
 );
 
-router.get("/admin/products/:productId",
-  protectRoute,
-  adminRoute,
-  getProductByIdAdmin
-);
 
-router.patch("/admin/products/:productId/stock",
+router.post("/age-groups", protectRoute, adminRoute, createAgeGroup);
+router.get("/age-groups", protectRoute, adminRoute, getAllAgeGroupsAdmin);
+router.put(
+  "/age-groups/:ageGroupId",
   protectRoute,
   adminRoute,
-  updateProductStock
+  updateAgeGroup
+);
+router.patch(
+  "/age-groups/:ageGroupId/status",
+  protectRoute,
+  adminRoute,
+  toggleAgeGroupStatus
 );
 
 export default router;

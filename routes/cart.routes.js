@@ -6,28 +6,19 @@ import {
   getCart,
   updateCartQuantity,
   removeFromCart,
-  clearCart
+  clearCart,
 } from "../controllers/cart.controller.js";
 
 const router = express.Router();
 
-/**
- * USER CART ROUTES (Protected)
- */
+router.post("/add", protectRoute, addToCart);
 
-// Add product to cart
-router.post("/cart/add", protectRoute, addToCart);
+router.get("/", protectRoute, getCart);
 
-// Get user cart
-router.get("/cart", protectRoute, getCart);
+router.patch("/update", protectRoute, updateCartQuantity);
 
-// Update quantity
-router.patch("/cart/update", protectRoute, updateCartQuantity);
+router.delete("/remove/:productId", protectRoute, removeFromCart);
 
-// Remove specific product
-router.delete("/cart/remove/:productId", protectRoute, removeFromCart);
-
-// Clear entire cart
-router.delete("/cart/clear", protectRoute, clearCart);
+router.delete("/clear", protectRoute, clearCart);
 
 export default router;
