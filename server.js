@@ -35,10 +35,8 @@ app.use("/api", paymentRoutes);
 app.use("/api/debug", debugRoutes);
 
 
-app.listen(PORT, async() => {
-	console.log("Server is running on http://localhost:" + PORT);
-	await connectDB();
-	await seedAgeGroups();
+app.listen(PORT, async () => {
+  console.log("Server is running on http://localhost:" + PORT);
+  await connectDB();
+  // await seedAgeGroups();
 });
-
-
