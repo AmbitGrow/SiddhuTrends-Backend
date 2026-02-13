@@ -6,33 +6,44 @@ import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 
 export async function reserveStock({
   orderIntent,
-  items
+  items,
+  session: externalSession
 }) {
-  const session = await mongoose.startSession();
+  // Use external session if provided (for atomic operations), otherwise create new
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
 
   try {
-    session.startTransaction();
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
 
     for (const item of items) {
-      const inventory = await Inventory.findOne(
-        { productId: item.productId },
-        null,
-        { session }
+      // Atomic update with race protection
+      // This ensures check + update happen atomically at DB level
+      const result = await Inventory.findOneAndUpdate(
+        { 
+          productId: item.productId,
+          // Ensure available stock (totalStock - reservedStock) >= requested quantity
+          $expr: { 
+            $gte: [
+              { $subtract: ["$totalStock", "$reservedStock"] }, 
+              item.quantity
+            ] 
+          }
+        },
+        { 
+          $inc: { reservedStock: item.quantity }
+        },
+        { 
+          session, 
+          new: true // Return updated document
+        }
       );
 
-      if (!inventory) {
-        throw new Error("Inventory not found");
+      if (!result) {
+        throw new Error(`Insufficient stock for product ${item.productId}`);
       }
-
-      const available =
-        inventory.totalStock - inventory.reservedStock;
-
-      if (available < item.quantity) {
-        throw new Error("Insufficient stock");
-      }
-
-      inventory.reservedStock += item.quantity;
-      await inventory.save({ session });
 
       await InventoryReservation.create(
         [{
@@ -62,20 +73,29 @@ export async function reserveStock({
     );
     await orderIntent.save({ session });
 
-    await session.commitTransaction();
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
   } catch (err) {
-    await session.abortTransaction();
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
     throw err;
   } finally {
-    session.endSession();
+    if (shouldManageSession) {
+      session.endSession();
+    }
   }
 }
 
-export async function releaseStock(orderIntentId) {
-  const session = await mongoose.startSession();
+export async function releaseStock(orderIntentId, externalSession = null) {
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
 
   try {
-    session.startTransaction();
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
 
     const reservations = await InventoryReservation.find(
       {
@@ -87,14 +107,21 @@ export async function releaseStock(orderIntentId) {
     );
 
     for (const res of reservations) {
-      const inventory = await Inventory.findOne(
-        { productId: res.productId },
-        null,
-        { session }
+      // Atomic decrement of reservedStock
+      const result = await Inventory.findOneAndUpdate(
+        { 
+          productId: res.productId,
+          reservedStock: { $gte: res.quantity } // Safety check
+        },
+        { 
+          $inc: { reservedStock: -res.quantity }
+        },
+        { session, new: true }
       );
 
-      inventory.reservedStock -= res.quantity;
-      await inventory.save({ session });
+      if (!result) {
+        throw new Error(`Cannot release stock for product ${res.productId}`);
+      }
 
       res.status = "RELEASED";
       await res.save({ session });
@@ -110,20 +137,29 @@ export async function releaseStock(orderIntentId) {
       );
     }
 
-    await session.commitTransaction();
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
   } catch (err) {
-    await session.abortTransaction();
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
     throw err;
   } finally {
-    session.endSession();
+    if (shouldManageSession) {
+      session.endSession();
+    }
   }
 }
 
-export async function consumeStock(orderIntentId) {
-  const session = await mongoose.startSession();
+export async function consumeStock(orderIntentId, externalSession = null) {
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
 
   try {
-    session.startTransaction();
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
 
     const reservations = await InventoryReservation.find(
       {
@@ -135,20 +171,25 @@ export async function consumeStock(orderIntentId) {
     );
 
     for (const res of reservations) {
-      const inventory = await Inventory.findOne(
-        { productId: res.productId },
-        null,
-        { session }
+      // Atomic update: decrement both reserved and total stock
+      const result = await Inventory.findOneAndUpdate(
+        { 
+          productId: res.productId,
+          reservedStock: { $gte: res.quantity },
+          totalStock: { $gte: res.quantity }
+        },
+        { 
+          $inc: { 
+            reservedStock: -res.quantity,
+            totalStock: -res.quantity
+          }
+        },
+        { session, new: true }
       );
 
-      inventory.reservedStock -= res.quantity;
-      inventory.totalStock -= res.quantity;
-
-      if (inventory.totalStock < 0) {
-        throw new Error("Stock invariant violated");
+      if (!result) {
+        throw new Error(`Cannot consume stock for product ${res.productId}`);
       }
-
-      await inventory.save({ session });
 
       res.status = "CONSUMED";
       await res.save({ session });
@@ -164,11 +205,17 @@ export async function consumeStock(orderIntentId) {
       );
     }
 
-    await session.commitTransaction();
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
   } catch (err) {
-    await session.abortTransaction();
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
     throw err;
   } finally {
-    session.endSession();
+    if (shouldManageSession) {
+      session.endSession();
+    }
   }
 }

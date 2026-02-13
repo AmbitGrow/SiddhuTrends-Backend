@@ -129,6 +129,12 @@ const verifyPaymentInternal = async (
         toStatus: "FAILED",
         source: "VERIFY_API"
       });
+      
+      console.log("🚨 Emitting PAYMENT_FAILED event (signature mismatch)");
+      paymentEventEmitter.emit("PAYMENT_FAILED", {
+        orderIntentId: payment.orderIntentId.toString()
+      });
+      
       throw new Error("Invalid payment signature");
     }
   }
@@ -147,6 +153,12 @@ const verifyPaymentInternal = async (
       toStatus: "FAILED",
       source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
     });
+    
+    console.log("🚨 Emitting PAYMENT_FAILED event (not captured)");
+    paymentEventEmitter.emit("PAYMENT_FAILED", {
+      orderIntentId: payment.orderIntentId.toString()
+    });
+    
     throw new Error("Payment not captured");
   }
 
@@ -161,6 +173,12 @@ const verifyPaymentInternal = async (
       toStatus: "FAILED",
       source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
     });
+    
+    console.log("🚨 Emitting PAYMENT_FAILED event (amount mismatch)");
+    paymentEventEmitter.emit("PAYMENT_FAILED", {
+      orderIntentId: payment.orderIntentId.toString()
+    });
+    
     throw new Error("Payment amount mismatch");
   }
 
@@ -275,7 +293,21 @@ export const razorpayWebhook = async (req, res) => {
     }
 
     if (event.event === "payment.failed") {
-      console.log("PAYMENT_FAILED", razorpay_payment_id);
+      console.log("PAYMENT_FAILED webhook event", razorpay_payment_id);
+      
+      const payment = await Payment.findOne({
+        gatewayOrderId: razorpay_order_id
+      });
+      
+      if (payment && payment.paymentStatus !== "SUCCESS") {
+        payment.paymentStatus = "FAILED";
+        await payment.save();
+        
+        console.log("🚨 Emitting PAYMENT_FAILED event (webhook failure)");
+        paymentEventEmitter.emit("PAYMENT_FAILED", {
+          orderIntentId: payment.orderIntentId.toString()
+        });
+      }
     }
 
     try {

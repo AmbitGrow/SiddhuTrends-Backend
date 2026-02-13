@@ -12,6 +12,7 @@ import ageGroupRoutes from "./routes/ageGroup.routes.js";
 import debugRoutes from "./routes/debug.routes.js";
 import cookieParser from "cookie-parser";
 import "./services/orderPaymentListener.js";
+import { expireOrderIntents } from "./jobs/expireOrderIntents.job.js";
 dotenv.config();
 
 const app = express();
@@ -39,4 +40,14 @@ app.listen(PORT, async () => {
   console.log("Server is running on http://localhost:" + PORT);
   await connectDB();
   // await seedAgeGroups();
+  
+  // 🕐 Start expiry job (runs every 60 seconds)
+  console.log("⏰ Starting OrderIntent expiry job...");
+  setInterval(async () => {
+    try {
+      await expireOrderIntents();
+    } catch (err) {
+      console.error("❌ Expiry job failed:", err);
+    }
+  }, 60 * 1000);
 });

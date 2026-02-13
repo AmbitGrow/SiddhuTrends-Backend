@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import OrderIntent from "../models/orderIntent.model.js";
 import OrderItem from "../models/orderItem.model.js";
 import Order from "../models/order.model.js";
@@ -9,14 +10,20 @@ import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 /**
  * CREATE ORDER INTENT (Buy Now / Cart Checkout)
  * This does NOT create a final order.
+ * Full atomic transaction: Intent + Items + Reservations
  */
 export const createOrderIntent = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
+    session.startTransaction();
+    
     const userId = req.user._id;
     const { items } = req.body;
     // items = [{ productId, quantity }]
 
     if (!items || items.length === 0) {
+      await session.abortTransaction();
       return res.status(400).json({ message: "No items provided" });
     }
 
@@ -24,9 +31,10 @@ export const createOrderIntent = async (req, res) => {
     const products = await Product.find({
       _id: { $in: items.map(i => i.productId) },
       isActive: true
-    });
+    }).session(session);
 
     if (products.length !== items.length) {
+      await session.abortTransaction();
       return res.status(400).json({ message: "Invalid or inactive product" });
     }
 
@@ -44,6 +52,7 @@ export const createOrderIntent = async (req, res) => {
       const product = productMap.get(item.productId.toString());
 
       if (item.quantity <= 0) {
+        await session.abortTransaction();
         return res.status(400).json({ message: "Invalid quantity" });
       }
 
@@ -58,10 +67,10 @@ export const createOrderIntent = async (req, res) => {
     const deliveryCharge = subtotal >= 1000 ? 0 : 50;
     const totalAmount = subtotal + gstAmount + deliveryCharge;
 
-    // 5️⃣ Create OrderIntent
+    // 5️⃣ Create OrderIntent (within transaction)
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
 
-    const orderIntent = await OrderIntent.create({
+    const orderIntentDoc = await OrderIntent.create([{
       userId,
       status: "CREATED",
       subtotal,
@@ -69,9 +78,11 @@ export const createOrderIntent = async (req, res) => {
       deliveryCharge,
       totalAmount,
       expiresAt
-    });
+    }], { session });
+    
+    const orderIntent = orderIntentDoc[0];
 
-    // 6️⃣ Create OrderItem snapshots
+    // 6️⃣ Create OrderItem snapshots (within transaction)
     const orderItems = items.map(item => {
       const product = productMap.get(item.productId.toString());
 
@@ -84,20 +95,17 @@ export const createOrderIntent = async (req, res) => {
       };
     });
 
-    await OrderItem.insertMany(orderItems);
+    await OrderItem.insertMany(orderItems, { session });
 
-    // 7️⃣ Reserve stock (transactional)
+    // 7️⃣ Reserve stock (transactional) - passes session internally
     await reserveStock({
       orderIntent,
-      items
+      items,
+      session  // Pass session to reserveStock
     });
 
-    // 8️⃣ Move intent → PAYMENT_IN_PROGRESS
-    orderIntent.status = transitionOrderIntent(
-      orderIntent.status,
-      "PAYMENT_IN_PROGRESS"
-    );
-    await orderIntent.save();
+    // 8️⃣ Commit transaction
+    await session.commitTransaction();
 
     return res.status(201).json({
       message: "Order intent created",
@@ -107,8 +115,11 @@ export const createOrderIntent = async (req, res) => {
     });
 
   } catch (error) {
+    await session.abortTransaction();
     console.error("Create OrderIntent Error:", error);
     return res.status(500).json({ message: error.message });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -155,7 +166,10 @@ export const getMyOrders = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    const orders = await Order.find({ userId })
+    const orders = await Order.find({ 
+      userId,
+      status: "CONFIRMED"
+    })
       .sort({ confirmedAt: -1 });
 
     return res.json(orders);
