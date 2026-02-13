@@ -10,7 +10,7 @@ router.post(
   initiatePayment
 );  
 
-router.post("/verify", verifyPayment);
-router.post("/webhook", razorpayWebhook);
+router.post("/payments/verify", verifyPayment);
+router.post("/payments/webhook", razorpayWebhook);
 
 export default router;
