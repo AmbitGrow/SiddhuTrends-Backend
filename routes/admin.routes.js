@@ -1,5 +1,6 @@
 import express from "express";
 import { protectRoute, adminRoute } from "../middleware/auth.middleware.js";
+import { validate, productSchemas, categorySchemas, ageGroupSchemas } from "../middleware/validation.js";
 
 import {
   createProduct,
@@ -26,11 +27,12 @@ import {
 const router = express.Router();
 
 
-router.post("/products", protectRoute, adminRoute, createProduct);
+router.post("/products", protectRoute, adminRoute, validate(productSchemas.createProduct), createProduct);
 router.put(
   "/products/:productId",
   protectRoute,
   adminRoute,
+  validate(productSchemas.updateProduct),
   updateProduct,
 );
 router.get("/products", protectRoute, adminRoute, getAllProductsAdmin);
@@ -44,11 +46,12 @@ router.patch(
   "/products/:productId/stock",
   protectRoute,
   adminRoute,
+  validate(productSchemas.updateStock),
   updateProductStock,
 );
 
 
-router.post("/categories", protectRoute, adminRoute, createCategory);
+router.post("/categories", protectRoute, adminRoute, validate(categorySchemas.createCategory), createCategory);
 router.get(
   "/categories",
   protectRoute,
@@ -59,28 +62,32 @@ router.put(
   "/categories/:categoryId",
   protectRoute,
   adminRoute,
+  validate(categorySchemas.updateCategory),
   updateCategory,
 );
 router.patch(
   "/categories/:categoryId/status",
   protectRoute,
   adminRoute,
+  validate(categorySchemas.toggleStatus),
   toggleCategoryStatus,
 );
 
 
-router.post("/age-groups", protectRoute, adminRoute, createAgeGroup);
+router.post("/age-groups", protectRoute, adminRoute, validate(ageGroupSchemas.createAgeGroup), createAgeGroup);
 router.get("/age-groups", protectRoute, adminRoute, getAllAgeGroupsAdmin);
 router.put(
   "/age-groups/:ageGroupId",
   protectRoute,
   adminRoute,
+  validate(ageGroupSchemas.updateAgeGroup),
   updateAgeGroup
 );
 router.patch(
   "/age-groups/:ageGroupId/status",
   protectRoute,
   adminRoute,
+  validate(ageGroupSchemas.toggleStatus),
   toggleAgeGroupStatus
 );
 

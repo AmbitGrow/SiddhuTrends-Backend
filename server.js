@@ -9,10 +9,13 @@ import { seedAgeGroups } from "./seed/ageGroup.seed.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import categoryRoutes from "./routes/category.routes.js";
 import ageGroupRoutes from "./routes/ageGroup.routes.js";
+import orderRoutes from "./routes/order.routes.js";
 import debugRoutes from "./routes/debug.routes.js";
 import cookieParser from "cookie-parser";
 import "./services/orderPaymentListener.js";
 import { expireOrderIntents } from "./jobs/expireOrderIntents.job.js";
+import { errorHandler, notFound } from "./middleware/errorHandler.js";
+import { generalLimiter } from "./middleware/rateLimiter.js";
 dotenv.config();
 
 const app = express();
@@ -26,14 +29,28 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
+// Apply general rate limiter to all routes
+app.use("/api", generalLimiter);
+
 app.use("/api/auth", authRoutes);
-app.use("/api", productRoutes);
-app.use("/api", adminRoutes);
-app.use("/api", categoryRoutes);
-app.use("/api", cartRoutes);
-app.use("/api", ageGroupRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/cart", cartRoutes);
+app.use("/api/age-groups", ageGroupRoutes);
+app.use("/api/orders", orderRoutes);
 app.use("/api", paymentRoutes);
-app.use("/api/debug", debugRoutes);
+
+// Debug routes (disabled in production)
+if (process.env.NODE_ENV !== "production") {
+  app.use("/api/debug", debugRoutes);
+}
+
+// 404 handler (must be after all routes)
+app.use(notFound);
+
+// Global error handler (must be last)
+app.use(errorHandler);
 
 
 app.listen(PORT, async () => {

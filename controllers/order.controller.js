@@ -124,37 +124,21 @@ export const createOrderIntent = async (req, res) => {
 };
 
 /**
- * START PAYMENT
- * This only hands off to Payment Service (Dev B)
+ * GET USER ORDER INTENTS (PENDING/IN-PROGRESS)
  */
-export const startPayment = async (req, res) => {
+export const getMyOrderIntents = async (req, res) => {
   try {
-    const { orderIntentId } = req.params;
+    const userId = req.user._id;
 
-    const orderIntent = await OrderIntent.findById(orderIntentId);
+    const orderIntents = await OrderIntent.find({ 
+      userId,
+      status: { $in: ["CREATED", "RESERVED", "PAYMENT_IN_PROGRESS"] }
+    })
+      .sort({ createdAt: -1 });
 
-    if (!orderIntent) {
-      return res.status(404).json({ message: "OrderIntent not found" });
-    }
-
-    if (orderIntent.status !== "PAYMENT_IN_PROGRESS") {
-      return res.status(400).json({
-        message: "Order is not ready for payment"
-      });
-    }
-
-    // Here you would call Payment Service API (Dev B)
-    // Example:
-    // await paymentService.createPayment(orderIntentId, orderIntent.totalAmount)
-
-    return res.json({
-      message: "Payment initiated",
-      orderIntentId,
-      amount: orderIntent.totalAmount
-    });
-
+    return res.json(orderIntents);
   } catch (error) {
-    console.error("Start Payment Error:", error);
+    console.error("Get OrderIntents Error:", error);
     return res.status(500).json({ message: error.message });
   }
 };

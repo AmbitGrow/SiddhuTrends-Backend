@@ -5,6 +5,7 @@ import OrderIntent from "../models/orderIntent.model.js"; // assumed
 import WebhookEvent from "../models/webhookEvent.model.js";
 import { logPaymentAudit } from "../utils/paymentAuditLogger.js";
 import { paymentEventEmitter } from "../utils/paymentEvents.js";
+import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 
 const ADVANCE_AMOUNT = 199; // fixed advance (LOCKED)
 
@@ -21,6 +22,13 @@ export const initiatePayment = async (req, res) => {
     const orderIntent = await OrderIntent.findById(orderIntentId);
     if (!orderIntent) {
       return res.status(404).json({ message: "OrderIntent not found" });
+    }
+
+    // 1.5️⃣ Check OrderIntent is RESERVED
+    if (orderIntent.status !== "RESERVED") {
+      return res.status(400).json({
+        message: `Order is not ready for payment. Current status: ${orderIntent.status}`
+      });
     }
 
     // 2️⃣ Prevent duplicate payment
@@ -77,6 +85,13 @@ export const initiatePayment = async (req, res) => {
       toStatus: "PENDING",
       source: "INITIATE_API"
     });
+
+    // 5.5️⃣ Transition OrderIntent to PAYMENT_IN_PROGRESS
+    orderIntent.status = transitionOrderIntent(
+      orderIntent.status,
+      "PAYMENT_IN_PROGRESS"
+    );
+    await orderIntent.save();
 
     // 6️⃣ Send payload to frontend
     return res.json({
