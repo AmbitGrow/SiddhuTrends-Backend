@@ -5,6 +5,7 @@ import Order from "../models/order.model.js";
 import Payment from "../models/payment.model.js";
 import { consumeStock, releaseStock } from "./inventory.service.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
+import { createOrderFromPayment } from "./orderCreation.service.js";
 
 // Guard against duplicate listener registration on hot reload
 if (!global.paymentListenersRegistered) {
@@ -13,90 +14,65 @@ if (!global.paymentListenersRegistered) {
 /**
  * PAYMENT_VERIFIED Handler
  * Converts OrderIntent → Order atomically
+ * Includes retry logic for transient MongoDB errors
  */
 paymentEventEmitter.on("PAYMENT_VERIFIED", async (data) => {
-  console.log("📦 PAYMENT_VERIFIED EVENT RECEIVED", data);
+  try {
+    console.log("=".repeat(60));
+    console.log("📦 PAYMENT_VERIFIED EVENT RECEIVED");
+    console.log("=".repeat(60));
+    console.log("Event data:", JSON.stringify(data, null, 2));
 
   const { orderIntentId, paymentId, amount, paymentType } = data;
 
-  const session = await mongoose.startSession();
+  if (!orderIntentId || !paymentId) {
+    console.error("❌ Missing required fields in event data:", { orderIntentId, paymentId });
+    return;
+  }
 
-  try {
-    session.startTransaction();
+  // Retry logic for transient MongoDB errors
+  const maxRetries = 3;
+  let lastError;
 
-    // 1️⃣ Fetch OrderIntent
-    const orderIntent = await OrderIntent.findById(orderIntentId).session(session);
-
-    if (!orderIntent) {
-      console.error("❌ OrderIntent not found:", orderIntentId);
-      await session.abortTransaction();
-      return;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Order creation attempt ${attempt}/${maxRetries}...`);
+      const order = await createOrderFromPayment(orderIntentId, paymentId, paymentType);
+      console.log("✅ Event listener successfully created order:", order._id.toString());
+      return; // Success - exit retry loop
+    } catch (error) {
+      lastError = error;
+      
+      // Check if it's a transient error that can be retried
+      const isTransientError = 
+        error.errorLabelSet?.has('TransientTransactionError') ||
+        error.code === 112 || // WriteConflict
+        error.code === 11000; // DuplicateKey (might be timing issue)
+      
+      if (isTransientError && attempt < maxRetries) {
+        const delay = Math.min(100 * Math.pow(2, attempt - 1), 1000); // Exponential backoff: 100ms, 200ms, 400ms
+        console.log(`⚠️ Transient error on attempt ${attempt}, retrying in ${delay}ms...`);
+        console.log(`   Error: ${error.message}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // Non-transient error or max retries reached
+      console.error(`❌ Order creation failed after ${attempt} attempts:`, error.message);
+      console.error("Stack:", error.stack);
+      break;
     }
-
-    // 2️⃣ Idempotency check — already converted?
-    if (orderIntent.status === "CONVERTED") {
-      console.log("⚠️ OrderIntent already converted, skipping:", orderIntentId);
-      await session.abortTransaction();
-      return;
-    }
-
-    // 3️⃣ Check if Order already exists (double creation guard)
-    const existingOrder = await Order.findOne({ orderIntentId }).session(session);
-    if (existingOrder) {
-      console.log("⚠️ Order already exists, skipping:", orderIntentId);
-      await session.abortTransaction();
-      return;
-    }
-
-    // 4️⃣ Verify payment amount (Partial COD enforcement)
-    const payment = await Payment.findById(paymentId).session(session);
-    if (!payment || payment.paymentStatus !== "SUCCESS") {
-      console.error("❌ Payment not verified:", paymentId);
-      await session.abortTransaction();
-      return;
-    }
-
-    // For PARTIAL_COD, ensure advance payment was made
-    if (paymentType === "PARTIAL_COD" && payment.paidAmount < 199) {
-      console.error("❌ Partial COD advance not met:", payment.paidAmount);
-      await session.abortTransaction();
-      return;
-    }
-
-    // 5️⃣ Consume inventory (permanent stock deduction)
-    await consumeStock(orderIntent._id, session);
-
-    // 6️⃣ Create Order
-    const order = await Order.create([{
-      orderIntentId: orderIntent._id,
-      userId: orderIntent.userId,
-      paymentId: payment._id.toString(),
-      finalAmount: orderIntent.totalAmount,
-      gstAmount: orderIntent.gstAmount,
-      status: "CONFIRMED",
-      confirmedAt: new Date()
-    }], { session });
-
-    console.log("✅ Order created:", order[0]._id);
-
-    // 7️⃣ Update OrderIntent → CONVERTED
-    orderIntent.status = transitionOrderIntent(orderIntent.status, "CONVERTED");
-    await orderIntent.save({ session });
-
-    // 8️⃣ Commit transaction
-    await session.commitTransaction();
-
-    console.log("✅ Order conversion successful:", order[0]._id);
-
-  } catch (error) {
-    await session.abortTransaction();
-    console.error("❌ Order conversion failed:", error);
-
-    // TODO: Add to dead letter queue or alert system
-    // This is a critical failure — payment captured but order not created
-
-  } finally {
-    session.endSession();
+  }
+  
+  // If we got here, all retries failed
+  if (lastError) {
+    console.error("❌ CRITICAL: Order creation failed after all retries");
+    console.error("Last error:", lastError.message);
+  }
+  
+  } catch (wrapperError) {
+    console.error("❌ CRITICAL: Event handler wrapper error:", wrapperError);
+    console.error("Stack:", wrapperError.stack);
   }
 });
 

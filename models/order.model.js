@@ -1,6 +1,14 @@
 import mongoose from "mongoose";
+import generateOrderNumber from "../utils/generateOrderNumber.js";
 
 const orderSchema = new mongoose.Schema({
+  orderNumber: {
+    type: String,
+    unique: true,
+    required: true,
+    index: true
+  },
+
   orderIntentId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "OrderIntent",
@@ -30,6 +38,14 @@ const orderSchema = new mongoose.Schema({
   },
 
   confirmedAt: { type: Date, required: true }
+});
+
+// Auto-generate orderNumber before saving
+orderSchema.pre('save', async function() {
+  if (!this.orderNumber) {
+    this.orderNumber = generateOrderNumber();
+  }
+  // Note: No next() call needed in async middleware
 });
 
 export default mongoose.model("Order", orderSchema);

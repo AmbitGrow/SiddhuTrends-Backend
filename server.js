@@ -11,6 +11,7 @@ import categoryRoutes from "./routes/category.routes.js";
 import ageGroupRoutes from "./routes/ageGroup.routes.js";
 import orderRoutes from "./routes/order.routes.js";
 import debugRoutes from "./routes/debug.routes.js";
+import diagnosticRoutes from "./routes/diagnostic.routes.js";
 import cookieParser from "cookie-parser";
 import "./services/orderPaymentListener.js";
 import { expireOrderIntents } from "./jobs/expireOrderIntents.job.js";
@@ -44,6 +45,7 @@ app.use("/api", paymentRoutes);
 // Debug routes (disabled in production)
 if (process.env.NODE_ENV !== "production") {
   app.use("/api/debug", debugRoutes);
+  app.use("/api/diagnostic", diagnosticRoutes);
 }
 
 // 404 handler (must be after all routes)

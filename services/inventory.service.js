@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import Inventory from "../models/inventory.model.js";
 import InventoryReservation from "../models/inventoryReservation.model.js";
 import InventoryLog from "../models/inventoryLog.model.js";
+import Product from "../models/product.model.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 
 export async function reserveStock({
@@ -42,7 +43,9 @@ export async function reserveStock({
       );
 
       if (!result) {
-        throw new Error(`Insufficient stock for product ${item.productId}`);
+        // This should rarely happen since we validate stock upfront
+        // Only triggers in race conditions or if inventory was deleted mid-transaction
+        throw new Error(`Stock reservation failed for product ${item.productId}. Stock may have been taken by another order.`);
       }
 
       await InventoryReservation.create(
@@ -171,7 +174,7 @@ export async function consumeStock(orderIntentId, externalSession = null) {
     );
 
     for (const res of reservations) {
-      // Atomic update: decrement both reserved and total stock
+      // Atomic update: decrement both reserved and total stock in Inventory
       const result = await Inventory.findOneAndUpdate(
         { 
           productId: res.productId,
@@ -190,6 +193,13 @@ export async function consumeStock(orderIntentId, externalSession = null) {
       if (!result) {
         throw new Error(`Cannot consume stock for product ${res.productId}`);
       }
+
+      // Sync Product.stock with Inventory.totalStock (bidirectional sync)
+      await Product.findByIdAndUpdate(
+        res.productId,
+        { $inc: { stock: -res.quantity } },
+        { session }
+      );
 
       res.status = "CONSUMED";
       await res.save({ session });
