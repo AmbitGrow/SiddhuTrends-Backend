@@ -424,13 +424,13 @@ db.orders.findOne({ orderIntentId: ObjectId("YOUR_ORDER_INTENT_ID") })
 
 ### ✅ TEST CASE 2 CHECKLIST
 
-- [ ] Payment.paymentType = "PARTIAL_COD"
-- [ ] Payment.paidAmount = 199 (NOT full amount)
-- [ ] Order created with status = CONFIRMED
-- [ ] Order.orderType = "PARTIAL_COD"
-- [ ] Order.totalAmount shows full price (e.g., 999)
-- [ ] Stock deducted fully
-- [ ] Reservation consumed
+- [✅] Payment.paymentType = "PARTIAL_COD"
+- [✅] Payment.paidAmount = 199 (NOT full amount)
+- [✅] Order created with status = CONFIRMED
+- [✅] Order.orderType = "PARTIAL_COD"
+- [✅] Order.totalAmount shows full price (e.g., 999)
+- [✅] Stock deducted fully
+- [✅] Reservation consumed
 
 ---
 
@@ -513,12 +513,12 @@ db.inventoryreservations.find({ orderIntentId: ObjectId("YOUR_ORDER_INTENT_ID") 
 
 ### ✅ TEST CASE 3 CHECKLIST
 
-- [ ] Payment verification API returned error
-- [ ] Payment status = FAILED
-- [ ] Order was NOT created
-- [ ] Stock was released (reservedStock decreased)
-- [ ] Reservation status = RELEASED
-- [ ] Server logs show signature mismatch error
+- [✅] Payment verification API returned error
+- [✅] Payment status = FAILED
+- [✅] Order was NOT created
+- [✅] Stock was released (reservedStock decreased)
+- [✅] Reservation status = RELEASED
+- [✅] Server logs show signature mismatch error
 
 ---
 

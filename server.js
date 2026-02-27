@@ -62,6 +62,15 @@ app.listen(PORT, async () => {
   
   // 🕐 Start expiry job (runs every 60 seconds)
   console.log("⏰ Starting OrderIntent expiry job...");
+  
+  // Run immediately on startup
+  try {
+    await expireOrderIntents();
+  } catch (err) {
+    console.error("❌ Initial expiry job failed:", err);
+  }
+  
+  // Then run every 60 seconds
   setInterval(async () => {
     try {
       await expireOrderIntents();

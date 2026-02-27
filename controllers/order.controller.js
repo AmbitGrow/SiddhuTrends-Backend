@@ -8,163 +8,165 @@ import User from "../models/user.model.js";
 
 import { reserveStock } from "../services/inventory.service.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
+import { runTransactionWithRetry } from "../utils/transactionRunner.js";
 
 /**
  * CREATE ORDER INTENT (Buy Now / Cart Checkout)
  * This does NOT create a final order.
  * Full atomic transaction: Intent + Items + Reservations
+ * 🔁 WITH AUTOMATIC RETRY for race conditions
  */
 export const createOrderIntent = async (req, res) => {
-  const session = await mongoose.startSession();
-  
+  const userId = req.user._id;
+  const { items } = req.body;
+
   try {
-    session.startTransaction();
-    
-    const userId = req.user._id;
-    const { items } = req.body;
-    // items = [{ productId, quantity }]
+    let orderIntent;
+    let totalAmount;
+    let expiresAt;
 
-    if (!items || items.length === 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "No items provided" });
-    }
+    // 🔁 Run transaction with automatic retry for race conditions
+    await runTransactionWithRetry(async (session) => {
+      // items = [{ productId, quantity }]
 
-    // 🛡️ Enhancement 5: Guard against duplicate active intents
-    const existingActiveIntent = await OrderIntent.findOne({
-      userId,
-      status: { $in: ["CREATED", "RESERVED", "PAYMENT_IN_PROGRESS"] },
-      expiresAt: { $gt: new Date() }
-    }).session(session);
+      if (!items || items.length === 0) {
+        throw { status: 400, message: "No items provided" };
+      }
 
-    if (existingActiveIntent) {
-      await session.abortTransaction();
-      return res.status(409).json({
-        message: "You already have an active order in progress. Please complete or wait for it to expire.",
-        existingOrderIntentId: existingActiveIntent._id,
-        expiresAt: existingActiveIntent.expiresAt
+      // 🛡️ Enhancement 5: Guard against duplicate active intents
+      const existingActiveIntent = await OrderIntent.findOne({
+        userId,
+        status: { $in: ["CREATED", "RESERVED", "PAYMENT_IN_PROGRESS"] },
+        expiresAt: { $gt: new Date() }
+      }).session(session);
+
+      if (existingActiveIntent) {
+        throw {
+          status: 409,
+          message: "You already have an active order in progress. Please complete or wait for it to expire.",
+          existingOrderIntentId: existingActiveIntent._id,
+          expiresAt: existingActiveIntent.expiresAt
+        };
+      }
+
+      // 1️⃣ Fetch products
+      const products = await Product.find({
+        _id: { $in: items.map(i => i.productId) },
+        isActive: true
+      }).session(session);
+
+      if (products.length !== items.length) {
+        throw { status: 400, message: "Invalid or inactive product" };
+      }
+
+      // 2️⃣ Create product lookup
+      const productMap = new Map();
+      products.forEach(p => productMap.set(p._id.toString(), p));
+
+      // 3️⃣ Validate inventory exists and check stock availability
+      const productIds = items.map(i => i.productId);
+      const inventories = await Inventory.find({
+        productId: { $in: productIds }
+      }).session(session);
+
+      // Create inventory lookup map
+      const inventoryMap = new Map();
+      inventories.forEach(inv => inventoryMap.set(inv.productId.toString(), inv));
+
+      // Check each item for inventory issues
+      for (const item of items) {
+        const productId = item.productId.toString();
+        const product = productMap.get(productId);
+        const inventory = inventoryMap.get(productId);
+
+        // Check if inventory record exists
+        if (!inventory) {
+          throw {
+            status: 400,
+            message: `Product "${product.name}" has no inventory record. Please contact support.`,
+            productId,
+            productName: product.name
+          };
+        }
+
+        // Check if sufficient stock available
+        const availableStock = inventory.totalStock - inventory.reservedStock;
+        if (availableStock < item.quantity) {
+          throw {
+            status: 400,
+            message: `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${item.quantity}`,
+            productId,
+            productName: product.name,
+            availableStock,
+            requestedQuantity: item.quantity
+          };
+        }
+      }
+
+      // 4️⃣ Price calculation
+      let subtotal = 0;
+      let gstAmount = 0;
+
+      const GST_RATE = 0.18; // 18%
+
+      for (const item of items) {
+        const product = productMap.get(item.productId.toString());
+
+        if (item.quantity <= 0) {
+          throw { status: 400, message: "Invalid quantity" };
+        }
+
+        const basePrice = product.price * item.quantity;
+        const gst = basePrice * GST_RATE;
+
+        subtotal += basePrice;
+        gstAmount += gst;
+      }
+
+      // 5️⃣ Delivery charge logic
+      const deliveryCharge = subtotal >= 1000 ? 0 : 50;
+      totalAmount = subtotal + gstAmount + deliveryCharge;
+
+      // 6️⃣ Create OrderIntent (within transaction)
+      // 🕐 Enhancement 3: Short expiry window (10 minutes)
+      expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+
+      const orderIntentDoc = await OrderIntent.create([{
+        userId,
+        status: "CREATED",
+        subtotal,
+        gstAmount,
+        deliveryCharge,
+        totalAmount,
+        expiresAt
+      }], { session });
+      
+      orderIntent = orderIntentDoc[0];
+
+      // 7️⃣ Create OrderItem snapshots (within transaction)
+      const orderItems = items.map(item => {
+        const product = productMap.get(item.productId.toString());
+
+        return {
+          orderIntentId: orderIntent._id,
+          productId: product._id,
+          quantity: item.quantity,
+          priceAtPurchase: product.price,
+          gstRateAtPurchase: GST_RATE
+        };
       });
-    }
 
-    // 1️⃣ Fetch products
-    const products = await Product.find({
-      _id: { $in: items.map(i => i.productId) },
-      isActive: true
-    }).session(session);
+      await OrderItem.insertMany(orderItems, { session });
 
-    if (products.length !== items.length) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "Invalid or inactive product" });
-    }
+      // 8️⃣ Reserve stock (transactional) - passes session internally
+      await reserveStock({
+        orderIntent,
+        items,
+        session  // Pass session to reserveStock
+      });
 
-    // 2️⃣ Create product lookup
-    const productMap = new Map();
-    products.forEach(p => productMap.set(p._id.toString(), p));
-
-    // 3️⃣ Validate inventory exists and check stock availability
-    const productIds = items.map(i => i.productId);
-    const inventories = await Inventory.find({
-      productId: { $in: productIds }
-    }).session(session);
-
-    // Create inventory lookup map
-    const inventoryMap = new Map();
-    inventories.forEach(inv => inventoryMap.set(inv.productId.toString(), inv));
-
-    // Check each item for inventory issues
-    for (const item of items) {
-      const productId = item.productId.toString();
-      const product = productMap.get(productId);
-      const inventory = inventoryMap.get(productId);
-
-      // Check if inventory record exists
-      if (!inventory) {
-        await session.abortTransaction();
-        return res.status(400).json({ 
-          message: `Product "${product.name}" has no inventory record. Please contact support.`,
-          productId,
-          productName: product.name
-        });
-      }
-
-      // Check if sufficient stock available
-      const availableStock = inventory.totalStock - inventory.reservedStock;
-      if (availableStock < item.quantity) {
-        await session.abortTransaction();
-        return res.status(400).json({ 
-          message: `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${item.quantity}`,
-          productId,
-          productName: product.name,
-          availableStock,
-          requestedQuantity: item.quantity
-        });
-      }
-    }
-
-    // 4️⃣ Price calculation
-    let subtotal = 0;
-    let gstAmount = 0;
-
-    const GST_RATE = 0.18; // 18%
-
-    for (const item of items) {
-      const product = productMap.get(item.productId.toString());
-
-      if (item.quantity <= 0) {
-        await session.abortTransaction();
-        return res.status(400).json({ message: "Invalid quantity" });
-      }
-
-      const basePrice = product.price * item.quantity;
-      const gst = basePrice * GST_RATE;
-
-      subtotal += basePrice;
-      gstAmount += gst;
-    }
-
-    // 5️⃣ Delivery charge logic
-    const deliveryCharge = subtotal >= 1000 ? 0 : 50;
-    const totalAmount = subtotal + gstAmount + deliveryCharge;
-
-    // 6️⃣ Create OrderIntent (within transaction)
-    // 🕐 Enhancement 3: Short expiry window (10 minutes)
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
-
-    const orderIntentDoc = await OrderIntent.create([{
-      userId,
-      status: "CREATED",
-      subtotal,
-      gstAmount,
-      deliveryCharge,
-      totalAmount,
-      expiresAt
-    }], { session });
-    
-    const orderIntent = orderIntentDoc[0];
-
-    // 7️⃣ Create OrderItem snapshots (within transaction)
-    const orderItems = items.map(item => {
-      const product = productMap.get(item.productId.toString());
-
-      return {
-        orderIntentId: orderIntent._id,
-        productId: product._id,
-        quantity: item.quantity,
-        priceAtPurchase: product.price,
-        gstRateAtPurchase: GST_RATE
-      };
+      // Transaction automatically commits if this callback completes successfully
     });
-
-    await OrderItem.insertMany(orderItems, { session });
-
-    // 8️⃣ Reserve stock (transactional) - passes session internally
-    await reserveStock({
-      orderIntent,
-      items,
-      session  // Pass session to reserveStock
-    });
-
-    // 9️⃣ Commit transaction
-    await session.commitTransaction();
 
     // 🧹 Enhancement 2: Clear cart after successful order intent creation
     // This prevents re-checkout and duplicate reservations
@@ -184,11 +186,16 @@ export const createOrderIntent = async (req, res) => {
     });
 
   } catch (error) {
-    await session.abortTransaction();
     console.error("Create OrderIntent Error:", error);
-    return res.status(500).json({ message: error.message });
-  } finally {
-    session.endSession();
+    
+    // Handle business logic errors with custom status codes
+    if (error.status) {
+      const { status, message, ...details } = error;
+      return res.status(status).json({ message, ...details });
+    }
+    
+    // Handle unexpected errors
+    return res.status(500).json({ message: error.message || "Internal server error" });
   }
 };
 
