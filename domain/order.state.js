@@ -1,8 +1,10 @@
 const ALLOWED_TRANSITIONS = {
-  CONFIRMED: ["SHIPPED", "REFUNDED"],
+  CONFIRMED: ["SHIPPED", "CANCELLED"],
   SHIPPED: ["DELIVERED"],
-  DELIVERED: [],
-  REFUNDED: []
+  DELIVERED: ["REFUND_INITIATED"],
+  REFUND_INITIATED: ["REFUNDED"],
+  REFUNDED: [],
+  CANCELLED: []
 };
 
 export function transitionOrder(currentState, nextState) {

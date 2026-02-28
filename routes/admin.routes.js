@@ -24,6 +24,13 @@ import {
   toggleAgeGroupStatus
 } from "../controllers/ageGroup.controller.js";
 
+import {
+  cancelOrder,
+  getAllOrders,
+  getOrderById,
+  updateOrderStatus
+} from "../controllers/adminOrder.controller.js";
+
 const router = express.Router();
 
 
@@ -90,5 +97,11 @@ router.patch(
   validate(ageGroupSchemas.toggleStatus),
   toggleAgeGroupStatus
 );
+
+// ===== ORDER MANAGEMENT =====
+router.get("/orders", protectRoute, adminRoute, getAllOrders);
+router.get("/orders/:orderId", protectRoute, adminRoute, getOrderById);
+router.patch("/orders/:orderId/status", protectRoute, adminRoute, updateOrderStatus);
+router.post("/orders/:orderId/cancel", protectRoute, adminRoute, cancelOrder);
 
 export default router;

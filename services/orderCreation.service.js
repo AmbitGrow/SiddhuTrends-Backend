@@ -49,6 +49,24 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
       return existingOrder;
     }
 
+    // 2.5️⃣ Reject if expired or cancelled — prevents expiry vs payment race
+    if (orderIntent.status === "EXPIRED" || orderIntent.status === "CANCELLED") {
+      console.log(`❌ OrderIntent is ${orderIntent.status}, cannot create order`);
+      if (shouldManageSession) {
+        await localSession.abortTransaction();
+      }
+      throw new Error(`OrderIntent is ${orderIntent.status}. Cannot process payment — stock already released.`);
+    }
+
+    // 2.6️⃣ Verify OrderIntent is in valid state for conversion
+    if (orderIntent.status !== "PAYMENT_IN_PROGRESS") {
+      console.log(`❌ OrderIntent status is ${orderIntent.status}, expected PAYMENT_IN_PROGRESS`);
+      if (shouldManageSession) {
+        await localSession.abortTransaction();
+      }
+      throw new Error(`OrderIntent in unexpected state: ${orderIntent.status}`);
+    }
+
     // 3️⃣ Check if Order already exists
     const existingOrder = await Order.findOne({ orderIntentId }).session(localSession);
     if (existingOrder) {
@@ -164,6 +182,7 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
       totalProfit,
       paidAmount: paidAmount,
       amountDue: amountDue,
+      inventoryConsumed: true, // Stock was consumed in step 6
       status: "CONFIRMED",
       confirmedAt: new Date()
     }], { session: localSession });

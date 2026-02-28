@@ -173,6 +173,23 @@ export async function consumeStock(orderIntentId, externalSession = null) {
       { session }
     );
 
+    // Idempotency: if no ACTIVE reservations, stock was already consumed
+    if (reservations.length === 0) {
+      const consumed = await InventoryReservation.countDocuments({
+        orderIntentId,
+        status: "CONSUMED"
+      }).session(session);
+
+      if (consumed > 0) {
+        console.log(`⚠️ consumeStock: already consumed for ${orderIntentId}, skipping (idempotent)`);
+        if (shouldManageSession) {
+          await session.commitTransaction();
+        }
+        return;
+      }
+      throw new Error(`No active reservations found for OrderIntent ${orderIntentId}`);
+    }
+
     for (const res of reservations) {
       // Atomic update: decrement both reserved and total stock in Inventory
       const result = await Inventory.findOneAndUpdate(
@@ -210,6 +227,65 @@ export async function consumeStock(orderIntentId, externalSession = null) {
           orderIntentId,
           action: "DEDUCT",
           quantity: res.quantity
+        }],
+        { session }
+      );
+    }
+
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
+  } catch (err) {
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
+    throw err;
+  } finally {
+    if (shouldManageSession) {
+      session.endSession();
+    }
+  }
+}
+
+/**
+ * RESTOCK ON CANCEL
+ * Called when admin cancels a CONFIRMED order (before shipping)
+ * Adds stock back to totalStock (since consumeStock already deducted it)
+ */
+export async function restockOnCancel(order, externalSession = null) {
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
+
+  try {
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
+
+    for (const item of order.items) {
+      // Atomic: increment totalStock back
+      const result = await Inventory.findOneAndUpdate(
+        { productId: item.productId },
+        { $inc: { totalStock: item.quantity } },
+        { session, new: true }
+      );
+
+      if (!result) {
+        throw new Error(`Inventory record not found for product ${item.productId}`);
+      }
+
+      // Sync Product.stock
+      await Product.findByIdAndUpdate(
+        item.productId,
+        { $inc: { stock: item.quantity } },
+        { session }
+      );
+
+      await InventoryLog.create(
+        [{
+          productId: item.productId,
+          orderId: order._id,
+          action: "RESTOCK_CANCEL",
+          quantity: item.quantity
         }],
         { session }
       );

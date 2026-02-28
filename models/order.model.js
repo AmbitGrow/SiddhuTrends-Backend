@@ -104,11 +104,19 @@ const orderSchema = new mongoose.Schema({
 
   status: {
     type: String,
-    enum: ["CONFIRMED", "SHIPPED", "DELIVERED", "REFUNDED"],
+    enum: ["CONFIRMED", "SHIPPED", "DELIVERED", "REFUND_INITIATED", "REFUNDED", "CANCELLED"],
     required: true
   },
 
-  confirmedAt: { type: Date, required: true }
+  inventoryConsumed: {
+    type: Boolean,
+    default: false,
+    comment: "Set to true after consumeStock() succeeds. Prevents double-consume and validates restock eligibility."
+  },
+
+  confirmedAt: { type: Date, required: true },
+  cancelledAt: { type: Date, default: null },
+  cancelReason: { type: String, default: null }
 });
 
 // Auto-generate orderNumber before saving
