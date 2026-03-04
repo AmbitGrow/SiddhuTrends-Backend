@@ -16,7 +16,7 @@ const inventoryLogSchema = new mongoose.Schema(
 
     action: {
       type: String,
-      enum: ["LOCK", "RELEASE", "DEDUCT", "EXPIRE"],
+      enum: ["LOCK", "RELEASE", "DEDUCT", "EXPIRE", "RESTOCK_CANCEL"],
       required: true
     },
 

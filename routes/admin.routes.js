@@ -28,7 +28,10 @@ import {
   cancelOrder,
   getAllOrders,
   getOrderById,
-  updateOrderStatus
+  updateOrderStatus,
+  collectCOD,
+  initiateRefund,
+  confirmRefund
 } from "../controllers/adminOrder.controller.js";
 
 const router = express.Router();
@@ -102,6 +105,9 @@ router.patch(
 router.get("/orders", protectRoute, adminRoute, getAllOrders);
 router.get("/orders/:orderId", protectRoute, adminRoute, getOrderById);
 router.patch("/orders/:orderId/status", protectRoute, adminRoute, updateOrderStatus);
+router.post("/orders/:orderId/collect-cod", protectRoute, adminRoute, collectCOD);
 router.post("/orders/:orderId/cancel", protectRoute, adminRoute, cancelOrder);
+router.post("/orders/:orderId/refund", protectRoute, adminRoute, initiateRefund);
+router.post("/orders/:orderId/refund/confirm", protectRoute, adminRoute, confirmRefund);
 
 export default router;

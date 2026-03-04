@@ -53,6 +53,32 @@ const paymentSchema = new mongoose.Schema(
       default: "NONE"
     },
 
+    refundId: {
+      type: String,
+      sparse: true,
+      comment: "Razorpay refund ID"
+    },
+
+    refundAmount: {
+      type: Number,
+      default: 0
+    },
+
+    refundReason: {
+      type: String,
+      default: null
+    },
+
+    refundInitiatedAt: {
+      type: Date,
+      default: null
+    },
+
+    refundProcessedAt: {
+      type: Date,
+      default: null
+    },
+
     verifiedAt: {
       type: Date
     }

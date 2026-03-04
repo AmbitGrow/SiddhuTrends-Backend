@@ -115,8 +115,17 @@ const orderSchema = new mongoose.Schema({
   },
 
   confirmedAt: { type: Date, required: true },
+  deliveredAt: { type: Date, default: null },
   cancelledAt: { type: Date, default: null },
-  cancelReason: { type: String, default: null }
+  cancelReason: { type: String, default: null },
+  codCollectedAt: { 
+    type: Date, 
+    default: null,
+    comment: "When COD portion was collected by delivery person" 
+  },
+  refundReason: { type: String, default: null },
+  refundInitiatedAt: { type: Date, default: null },
+  refundedAt: { type: Date, default: null }
 });
 
 // Auto-generate orderNumber before saving

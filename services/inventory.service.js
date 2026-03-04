@@ -283,7 +283,7 @@ export async function restockOnCancel(order, externalSession = null) {
       await InventoryLog.create(
         [{
           productId: item.productId,
-          orderId: order._id,
+          orderIntentId: order.orderIntentId,
           action: "RESTOCK_CANCEL",
           quantity: item.quantity
         }],
