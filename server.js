@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import cors from "cors";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.route.js";
 import productRoutes from "./routes/product.routes.js";
@@ -18,9 +19,13 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 app.use(
-  "/api/payments/webhook",
-  express.raw({ type: "application/json" })
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  }),
 );
+
+app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
@@ -33,7 +38,6 @@ app.use("/api/cart", cartRoutes);
 app.use("/api/age-groups", agegroouproutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/debug", debugRoutes);
-
 
 app.listen(PORT, async () => {
   console.log("Server is running on http://localhost:" + PORT);

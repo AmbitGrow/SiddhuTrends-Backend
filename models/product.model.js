@@ -4,6 +4,8 @@ const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
 
+    slug: { type: String, required: true, unique: true },
+
     description: { type: String, default: "" },
 
     images: {
@@ -12,6 +14,12 @@ const productSchema = new mongoose.Schema(
     },
 
     price: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    mrp: {
       type: Number,
       required: true,
       min: 0,
@@ -40,6 +48,26 @@ const productSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    reservedStock: {
+      type: Number,
+      default: 0,
+    },
+    rating: {
+      type: Number,
+      default: 0,
+    },
+
+    numReviews: {
+      type: Number,
+      default: 0,
+    },
+
+    specifications: [
+      {
+        title: String,
+        value: String,
+      },
+    ],
 
     isBestSeller: {
       type: Boolean,
@@ -55,8 +83,9 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export default mongoose.model("Product", productSchema);

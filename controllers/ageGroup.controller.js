@@ -22,12 +22,12 @@ export const createAgeGroup = async (req, res) => {
       label,
       minAge,
       maxAge,
-      unit
+      unit,
     });
 
     res.status(201).json({
       message: "Age group created",
-      ageGroup
+      ageGroup,
     });
   } catch (error) {
     res.status(500).json({ message: "Failed to create age group" });
@@ -38,6 +38,9 @@ export const createAgeGroup = async (req, res) => {
 export const getAllAgeGroupsAdmin = async (req, res) => {
   try {
     const ageGroups = await AgeGroup.find().sort({ minAge: 1 });
+    if (req.query.ageGroupId) {
+      filters.ageGroupId = req.query.ageGroupId;
+    }
     res.json(ageGroups);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch age groups" });
@@ -68,7 +71,7 @@ export const updateAgeGroup = async (req, res) => {
 
     res.json({
       message: "Age group updated",
-      ageGroup
+      ageGroup,
     });
   } catch (error) {
     res.status(500).json({ message: "Failed to update age group" });
@@ -94,7 +97,7 @@ export const toggleAgeGroupStatus = async (req, res) => {
     await ageGroup.save();
 
     res.json({
-      message: `Age group ${isActive ? "enabled" : "disabled"}`
+      message: `Age group ${isActive ? "enabled" : "disabled"}`,
     });
   } catch (error) {
     res.status(500).json({ message: "Failed to update age group status" });
@@ -104,7 +107,9 @@ export const toggleAgeGroupStatus = async (req, res) => {
 // GET ACTIVE AGE GROUPS (PUBLIC)
 export const getActiveAgeGroups = async (req, res) => {
   try {
-    const ageGroups = await AgeGroup.find({ isActive: true }).sort({ minAge: 1 });
+    const ageGroups = await AgeGroup.find({ isActive: true }).sort({
+      minAge: 1,
+    });
     res.json(ageGroups);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch age groups" });
