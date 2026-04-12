@@ -20,7 +20,14 @@ const paymentAuditSchema = new mongoose.Schema({
 
   source: {
     type: String,
-    enum: ["INITIATE_API", "VERIFY_API", "WEBHOOK", "SYSTEM"]
+    enum: [
+      "INITIATE_API",
+      "VERIFY_API",
+      "WEBHOOK",
+      "SYSTEM",
+      "ADMIN_REFUND",
+      "ADMIN_CONFIRM_REFUND"
+    ]
   },
 
   createdAt: {

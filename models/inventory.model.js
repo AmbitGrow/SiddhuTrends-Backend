@@ -15,4 +15,13 @@ const inventorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Invariant: reservedStock must never exceed totalStock
+inventorySchema.pre('save', async function () {
+  if (this.reservedStock > this.totalStock) {
+    throw new Error(
+      `Invariant violation: reservedStock (${this.reservedStock}) > totalStock (${this.totalStock})`
+    );
+  }
+});
+
 export default mongoose.model("Inventory", inventorySchema);

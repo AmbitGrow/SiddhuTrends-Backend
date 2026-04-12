@@ -1,5 +1,6 @@
 import express from "express";
 import { protectRoute, adminRoute } from "../middleware/auth.middleware.js";
+import { validate, productSchemas, categorySchemas, ageGroupSchemas, orderSchemas } from "../middleware/validation.js";
 
 import {
   createProduct,
@@ -23,14 +24,29 @@ import {
   toggleAgeGroupStatus
 } from "../controllers/ageGroup.controller.js";
 
+import {
+  cancelOrder,
+  approveCancelRequest,
+  rejectCancelRequest,
+  getAllOrders,
+  getOrderById,
+  updateOrderStatus,
+  collectCOD,
+  initiateRefund,
+  approveRefundRequest,
+  rejectRefundRequest,
+  confirmRefund
+} from "../controllers/adminOrder.controller.js";
+
 const router = express.Router();
 
 
-router.post("/products", protectRoute, adminRoute, createProduct);
+router.post("/products", protectRoute, adminRoute, validate(productSchemas.createProduct), createProduct);
 router.put(
   "/products/:productId",
   protectRoute,
   adminRoute,
+  validate(productSchemas.updateProduct),
   updateProduct,
 );
 router.get("/products", protectRoute, adminRoute, getAllProductsAdmin);
@@ -44,11 +60,12 @@ router.patch(
   "/products/:productId/stock",
   protectRoute,
   adminRoute,
+  validate(productSchemas.updateStock),
   updateProductStock,
 );
 
 
-router.post("/categories", protectRoute, adminRoute, createCategory);
+router.post("/categories", protectRoute, adminRoute, validate(categorySchemas.createCategory), createCategory);
 router.get(
   "/categories",
   protectRoute,
@@ -59,29 +76,46 @@ router.put(
   "/categories/:categoryId",
   protectRoute,
   adminRoute,
+  validate(categorySchemas.updateCategory),
   updateCategory,
 );
 router.patch(
   "/categories/:categoryId/status",
   protectRoute,
   adminRoute,
+  validate(categorySchemas.toggleStatus),
   toggleCategoryStatus,
 );
 
 
-router.post("/age-groups", protectRoute, adminRoute, createAgeGroup);
+router.post("/age-groups", protectRoute, adminRoute, validate(ageGroupSchemas.createAgeGroup), createAgeGroup);
 router.get("/age-groups", protectRoute, adminRoute, getAllAgeGroupsAdmin);
 router.put(
   "/age-groups/:ageGroupId",
   protectRoute,
   adminRoute,
+  validate(ageGroupSchemas.updateAgeGroup),
   updateAgeGroup
 );
 router.patch(
   "/age-groups/:ageGroupId/status",
   protectRoute,
   adminRoute,
+  validate(ageGroupSchemas.toggleStatus),
   toggleAgeGroupStatus
 );
+
+// ===== ORDER MANAGEMENT =====
+router.get("/orders", protectRoute, adminRoute, getAllOrders);
+router.get("/orders/:orderId", protectRoute, adminRoute, getOrderById);
+router.patch("/orders/:orderId/status", protectRoute, adminRoute, updateOrderStatus);
+router.post("/orders/:orderId/collect-cod", protectRoute, adminRoute, collectCOD);
+router.post("/orders/:orderId/cancel", protectRoute, adminRoute, cancelOrder);
+router.post("/orders/:orderId/refund", protectRoute, adminRoute, initiateRefund);
+router.post("/orders/:orderId/refund/confirm", protectRoute, adminRoute, confirmRefund);
+router.post("/orders/:orderId/cancel-request/approve", protectRoute, adminRoute, validate(orderSchemas.adminDecision), approveCancelRequest);
+router.post("/orders/:orderId/cancel-request/reject", protectRoute, adminRoute, validate(orderSchemas.adminDecision), rejectCancelRequest);
+router.post("/orders/:orderId/refund-request/approve", protectRoute, adminRoute, validate(orderSchemas.adminDecision), approveRefundRequest);
+router.post("/orders/:orderId/refund-request/reject", protectRoute, adminRoute, validate(orderSchemas.adminDecision), rejectRefundRequest);
 
 export default router;

@@ -1,6 +1,45 @@
 import User from "../models/user.model.js";
 import Product from "../models/product.model.js";
 
+const GST_RATE = 0.18;
+const FREE_DELIVERY_THRESHOLD = 1000;
+const DELIVERY_FEE = 50;
+
+const calculateCartTotals = (cartItems) => {
+  let subtotal = 0;
+  let totalQuantity = 0;
+
+  cartItems.forEach((item) => {
+    const price = item.product?.price ?? 0;
+    subtotal += price * item.quantity;
+    totalQuantity += item.quantity;
+  });
+
+  const gstAmount = subtotal * GST_RATE;
+  const deliveryCharge = subtotal >= FREE_DELIVERY_THRESHOLD || subtotal === 0 ? 0 : DELIVERY_FEE;
+  const totalAmount = subtotal + gstAmount + deliveryCharge;
+
+  return {
+    subtotal,
+    gstAmount,
+    deliveryCharge,
+    totalAmount,
+    itemCount: cartItems.length,
+    totalQuantity
+  };
+};
+
+const getCartWithTotals = async (userId) => {
+  const user = await User.findById(userId)
+    .populate("cartItems.product", "name price images stock isActive");
+
+  const cartItems = user?.cartItems || [];
+  return {
+    cartItems,
+    totals: calculateCartTotals(cartItems)
+  };
+};
+
 
 // ================= ADD TO CART =================
 export const addToCart = async (req, res) => {
@@ -59,9 +98,12 @@ export const addToCart = async (req, res) => {
 
     await user.save();
 
+    const { cartItems, totals } = await getCartWithTotals(userId);
+
     res.status(200).json({
       message: "Product added to cart",
-      cart: user.cartItems
+      cart: cartItems,
+      totals
     });
 
   } catch (err) {
@@ -73,23 +115,24 @@ export const addToCart = async (req, res) => {
 // ================= GET CART =================
 export const getCart = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .populate("cartItems.product", "name price images stock isActive");
+    const { cartItems, totals } = await getCartWithTotals(req.user._id);
 
     // If cart is empty — return friendly message
-    if (!user.cartItems.length) {
+    if (!cartItems.length) {
       return res.json({
         message: "Your cart is empty",
         count: 0,
-        cart: []
+        cart: [],
+        totals
       });
     }
 
     // Otherwise return cart normally
     res.json({
       message: "Cart fetched successfully",
-      count: user.cartItems.length,
-      cart: user.cartItems
+      count: cartItems.length,
+      cart: cartItems,
+      totals
     });
 
   } catch (err) {
@@ -138,9 +181,12 @@ export const updateCartQuantity = async (req, res) => {
 
     await user.save();
 
+    const { cartItems, totals } = await getCartWithTotals(req.user._id);
+
     res.json({
       message: "Cart updated successfully",
-      cart: user.cartItems
+      cart: cartItems,
+      totals
     });
 
   } catch (err) {
@@ -175,9 +221,12 @@ export const removeFromCart = async (req, res) => {
 
     await user.save();
 
+    const { cartItems, totals } = await getCartWithTotals(req.user._id);
+
     return res.json({
       message: "Item removed from cart",
-      cart: user.cartItems
+      cart: cartItems,
+      totals
     });
 
   } catch (err) {
@@ -197,7 +246,9 @@ export const clearCart = async (req, res) => {
     await user.save();
 
     res.json({
-      message: "Cart cleared successfully"
+      message: "Cart cleared successfully",
+      cart: [],
+      totals: calculateCartTotals([])
     });
 
   } catch (err) {
