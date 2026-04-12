@@ -1,6 +1,6 @@
 import express from "express";
 import { protectRoute, adminRoute } from "../middleware/auth.middleware.js";
-import { validate, productSchemas, categorySchemas, ageGroupSchemas } from "../middleware/validation.js";
+import { validate, productSchemas, categorySchemas, ageGroupSchemas, orderSchemas } from "../middleware/validation.js";
 
 import {
   createProduct,
@@ -26,11 +26,15 @@ import {
 
 import {
   cancelOrder,
+  approveCancelRequest,
+  rejectCancelRequest,
   getAllOrders,
   getOrderById,
   updateOrderStatus,
   collectCOD,
   initiateRefund,
+  approveRefundRequest,
+  rejectRefundRequest,
   confirmRefund
 } from "../controllers/adminOrder.controller.js";
 
@@ -109,5 +113,9 @@ router.post("/orders/:orderId/collect-cod", protectRoute, adminRoute, collectCOD
 router.post("/orders/:orderId/cancel", protectRoute, adminRoute, cancelOrder);
 router.post("/orders/:orderId/refund", protectRoute, adminRoute, initiateRefund);
 router.post("/orders/:orderId/refund/confirm", protectRoute, adminRoute, confirmRefund);
+router.post("/orders/:orderId/cancel-request/approve", protectRoute, adminRoute, validate(orderSchemas.adminDecision), approveCancelRequest);
+router.post("/orders/:orderId/cancel-request/reject", protectRoute, adminRoute, validate(orderSchemas.adminDecision), rejectCancelRequest);
+router.post("/orders/:orderId/refund-request/approve", protectRoute, adminRoute, validate(orderSchemas.adminDecision), approveRefundRequest);
+router.post("/orders/:orderId/refund-request/reject", protectRoute, adminRoute, validate(orderSchemas.adminDecision), rejectRefundRequest);
 
 export default router;

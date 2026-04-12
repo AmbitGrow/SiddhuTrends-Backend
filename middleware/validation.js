@@ -83,6 +83,52 @@ export const orderSchemas = {
     ).min(1).required().messages({
       "array.min": "At least one item is required",
       "any.required": "Items are required"
+    }),
+    deliveryAddress: Joi.object({
+      fullName: Joi.string().min(2).max(100).required(),
+      phone: Joi.string().min(7).max(20).required(),
+      addressLine1: Joi.string().min(3).max(200).required(),
+      addressLine2: Joi.string().allow("", null),
+      city: Joi.string().min(2).max(100).required(),
+      state: Joi.string().min(2).max(100).required(),
+      pincode: Joi.string().min(4).max(10).required()
+    }).required().messages({
+      "any.required": "Delivery address is required"
+    })
+  }),
+
+  createOrderIntentFromCart: Joi.object({
+    deliveryAddress: Joi.object({
+      fullName: Joi.string().min(2).max(100).required(),
+      phone: Joi.string().min(7).max(20).required(),
+      addressLine1: Joi.string().min(3).max(200).required(),
+      addressLine2: Joi.string().allow("", null),
+      city: Joi.string().min(2).max(100).required(),
+      state: Joi.string().min(2).max(100).required(),
+      pincode: Joi.string().min(4).max(10).required()
+    }).required().messages({
+      "any.required": "Delivery address is required"
+    })
+  }),
+
+  requestCancel: Joi.object({
+    reason: Joi.string().min(3).max(500).required().messages({
+      "string.min": "Cancellation reason must be at least 3 characters",
+      "any.required": "Cancellation reason is required"
+    })
+  }),
+
+  requestRefund: Joi.object({
+    reason: Joi.string().min(3).max(500).required().messages({
+      "string.min": "Refund reason must be at least 3 characters",
+      "any.required": "Refund reason is required"
+    })
+  }),
+
+  adminDecision: Joi.object({
+    reason: Joi.string().min(3).max(500).required().messages({
+      "string.min": "Decision reason must be at least 3 characters",
+      "any.required": "Decision reason is required"
     })
   })
 };

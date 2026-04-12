@@ -28,6 +28,12 @@ const orderSchema = new mongoose.Schema({
     required: true
   },
 
+  paymentStatus: {
+    type: String,
+    enum: ["PENDING", "SUCCESS", "REFUND_INITIATED", "REFUNDED"],
+    default: "SUCCESS"
+  },
+
   orderType: {
     type: String,
     enum: ["ONLINE", "PARTIAL_COD"],
@@ -102,9 +108,79 @@ const orderSchema = new mongoose.Schema({
     comment: "Amount to be collected during delivery (for PARTIAL_COD)"
   },
 
+  deliveryAddress: {
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true },
+    addressLine1: { type: String, required: true },
+    addressLine2: { type: String, default: "" },
+    city: { type: String, required: true },
+    state: { type: String, required: true },
+    pincode: { type: String, required: true }
+  },
+
+  trackingId: {
+    type: String,
+    default: null
+  },
+
+  trackingHistory: [
+    {
+      status: { type: String, required: true },
+      location: { type: String, default: "System" },
+      timestamp: { type: Date, default: Date.now }
+    }
+  ],
+
+  xpEarned: {
+    type: Number,
+    default: 0
+  },
+
+  cancelRequest: {
+    status: {
+      type: String,
+      enum: ["NONE", "PENDING", "APPROVED", "REJECTED"],
+      default: "NONE"
+    },
+    reason: { type: String, default: null },
+    requestedAt: { type: Date, default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+    adminNote: { type: String, default: null }
+  },
+
+  refundRequest: {
+    status: {
+      type: String,
+      enum: ["NONE", "PENDING", "APPROVED", "REJECTED"],
+      default: "NONE"
+    },
+    reason: { type: String, default: null },
+    requestedAt: { type: Date, default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+    adminNote: { type: String, default: null }
+  },
+
   status: {
     type: String,
-    enum: ["CONFIRMED", "SHIPPED", "DELIVERED", "REFUND_INITIATED", "REFUNDED", "CANCELLED"],
+    enum: [
+      "PENDING_PAYMENT",
+      "CONFIRMED",
+      "SHIPPED",
+      "DELIVERED",
+      "REFUND_INITIATED",
+      "REFUNDED",
+      "CANCELLED"
+    ],
     required: true
   },
 
@@ -114,7 +190,7 @@ const orderSchema = new mongoose.Schema({
     comment: "Set to true after consumeStock() succeeds. Prevents double-consume and validates restock eligibility."
   },
 
-  confirmedAt: { type: Date, required: true },
+  confirmedAt: { type: Date, default: null },
   deliveredAt: { type: Date, default: null },
   cancelledAt: { type: Date, default: null },
   cancelReason: { type: String, default: null },

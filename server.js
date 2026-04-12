@@ -14,6 +14,7 @@ import debugRoutes from "./routes/debug.routes.js";
 import diagnosticRoutes from "./routes/diagnostic.routes.js";
 import cookieParser from "cookie-parser";
 import "./services/orderPaymentListener.js";
+import "./services/orderLifecycleListener.js";
 import { expireOrderIntents } from "./jobs/expireOrderIntents.job.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";

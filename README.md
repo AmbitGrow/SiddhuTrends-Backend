@@ -216,7 +216,26 @@ http://localhost:5000
 npm run dev     - Run application using nodemon
 npm start       - Start application normally
 npm test        - Run tests (if configured)
+npm run test:integrity - Run transaction and concurrency integrity suite
 ```
+
+---
+
+## CI Integrity Workflow
+
+GitHub Actions workflow:
+
+```
+.github/workflows/integrity-tests.yml
+```
+
+Required repository secret:
+
+```
+MONGO_URI
+```
+
+Without `MONGO_URI`, the CI job fails fast with setup instructions.
 
 ---
 

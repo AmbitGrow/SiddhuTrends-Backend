@@ -7,6 +7,8 @@ import Product from "../models/product.model.js";
 import { consumeStock } from "./inventory.service.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 import generateOrderNumber from "../utils/generateOrderNumber.js";
+import { confirmOrder } from "../modules/orders/order.service.js";
+import { emitOrderLifecycleEvent } from "./orderLifecycle.service.js";
 
 /**
  * Create Order from Successful Payment
@@ -174,6 +176,7 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
       orderIntentId: orderIntent._id,
       userId: orderIntent.userId,
       paymentId: payment._id.toString(),
+      paymentStatus: "PENDING",
       orderType: paymentType,
       items: itemsWithFinancials,
       finalAmount: orderIntent.totalAmount,
@@ -182,28 +185,36 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
       totalProfit,
       paidAmount: paidAmount,
       amountDue: amountDue,
+      deliveryAddress: orderIntent.deliveryAddress,
       inventoryConsumed: true, // Stock was consumed in step 6
-      status: "CONFIRMED",
-      confirmedAt: new Date()
+      status: "PENDING_PAYMENT"
     }], { session: localSession });
 
+    const confirmedOrder = await confirmOrder({
+      orderId: order[0]._id,
+      session: localSession,
+      metadata: { location: "System" },
+      reason: "Order created from verified payment",
+      skipEmit: true
+    });
+
     console.log("✅ Order created:", {
-      orderId: order[0]._id.toString(),
-      orderNumber: order[0].orderNumber,
-      status: order[0].status,
-      orderType: order[0].orderType,
-      finalAmount: order[0].finalAmount,
-      totalInvestment: order[0].totalInvestment,
-      totalProfit: order[0].totalProfit,
-      itemCount: order[0].items.length,
-      paidAmount: order[0].paidAmount,
-      amountDue: order[0].amountDue
+      orderId: confirmedOrder._id.toString(),
+      orderNumber: confirmedOrder.orderNumber,
+      status: confirmedOrder.status,
+      orderType: confirmedOrder.orderType,
+      finalAmount: confirmedOrder.finalAmount,
+      totalInvestment: confirmedOrder.totalInvestment,
+      totalProfit: confirmedOrder.totalProfit,
+      itemCount: confirmedOrder.items.length,
+      paidAmount: confirmedOrder.paidAmount,
+      amountDue: confirmedOrder.amountDue
     });
 
     // 9️⃣ Update OrderIntent → CONVERTED
     const oldStatus = orderIntent.status;
     orderIntent.status = transitionOrderIntent(orderIntent.status, "CONVERTED");
-    orderIntent.convertedOrderId = order[0]._id;
+    orderIntent.convertedOrderId = confirmedOrder._id;
     await orderIntent.save({ session: localSession });
 
     console.log("✅ OrderIntent status updated:", {
@@ -214,14 +225,21 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
     // 🔟 Commit transaction
     if (shouldManageSession) {
       await localSession.commitTransaction();
+      emitOrderLifecycleEvent("ORDER_CONFIRMED", {
+        orderId: confirmedOrder._id.toString(),
+        orderNumber: confirmedOrder.orderNumber,
+        userId: confirmedOrder.userId?.toString(),
+        orderIntentId: orderIntent._id.toString(),
+        finalAmount: confirmedOrder.finalAmount
+      });
     }
 
     console.log("✅✅✅ ORDER CREATION SUCCESSFUL ✅✅✅");
-    console.log("Order ID:", order[0]._id.toString());
-    console.log("Order Number:", order[0].orderNumber);
+    console.log("Order ID:", confirmedOrder._id.toString());
+    console.log("Order Number:", confirmedOrder.orderNumber);
     console.log("💰 Profit:", totalProfit, `(${((totalProfit / orderIntent.totalAmount) * 100).toFixed(1)}% margin)`);
 
-    return order[0];
+    return confirmedOrder;
 
   } catch (error) {
     if (shouldManageSession) {

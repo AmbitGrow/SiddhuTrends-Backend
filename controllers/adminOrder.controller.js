@@ -1,10 +1,72 @@
 import mongoose from "mongoose";
 import Order from "../models/order.model.js";
 import Payment from "../models/payment.model.js";
-import { transitionOrder } from "../domain/order.state.js";
-import { restockOnCancel } from "../services/inventory.service.js";
-import { logPaymentAudit } from "../utils/paymentAuditLogger.js";
 import razorpay from "../config/razorpay.js";
+import { restockOnCancel } from "../services/inventory.service.js";
+import { initiateRefund as initiateGatewayRefund, confirmRefund as confirmGatewayRefund } from "../modules/payments/refund.service.js";
+import {
+  approveCancelDecision,
+  rejectRequestDecision,
+  emitOrderLifecycleEvent,
+  applyRefundTransition,
+  markShipped,
+  markDelivered,
+  completeRefund
+} from "../services/orderLifecycle.service.js";
+
+const initiateCancelRefund = async ({ order, reason, actorId }) => {
+  try {
+    if (!order.paymentId || !order.paidAmount || order.paidAmount <= 0) {
+      return { initiated: false, message: "No paid amount to refund" };
+    }
+
+    const refundAmount = Math.min(order.paidAmount, order.finalAmount);
+
+    const { payment, refund, alreadyRequested, alreadyProcessed } = await initiateGatewayRefund({
+      paymentId: order.paymentId,
+      orderId: order._id,
+      refundAmount,
+      reason: reason || "Cancellation approved",
+      session: null
+    });
+
+    if (alreadyRequested || alreadyProcessed) {
+      return { initiated: false, message: "Refund already requested/processed" };
+    }
+
+    order.refundReason = reason || "Cancellation approved";
+    order.refundInitiatedAt = new Date();
+    await order.save();
+
+    await emitOrderLifecycleEvent("ORDER_REFUND_INITIATED", {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      userId: order.userId?.toString(),
+      status: order.status,
+      refundId: refund.id,
+      refundAmount,
+      initiatedFrom: "CANCEL_APPROVAL"
+    });
+
+    await logOrderAuditEntry({
+      order,
+      fromStatus: order.status,
+      toStatus: order.status,
+      action: "CANCEL_REFUND_INITIATED",
+      changedBy: actorId || null,
+      reason: reason || "Cancellation approved"
+    });
+
+    return {
+      initiated: true,
+      refundId: refund.id,
+      refundAmount
+    };
+  } catch (error) {
+    console.error("Cancel refund initiation failed:", error.message);
+    return { initiated: false, message: error.message };
+  }
+};
 
 /**
  * CANCEL ORDER (Admin only — before shipping)
@@ -12,6 +74,7 @@ import razorpay from "../config/razorpay.js";
  */
 export const cancelOrder = async (req, res) => {
   const session = await mongoose.startSession();
+  const isApprovalMode = req.approvalMode === true;
 
   try {
     session.startTransaction();
@@ -26,25 +89,30 @@ export const cancelOrder = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // State machine validates only CONFIRMED can be cancelled
-    const newStatus = transitionOrder(order.status, "CANCELLED");
-
-    // Restock inventory ONLY if it was consumed
-    if (order.inventoryConsumed) {
-      await restockOnCancel(order, session);
-      order.inventoryConsumed = false;
-      console.log(`📦 Stock restored for order ${order.orderNumber}`);
-    } else {
-      console.log(`⚠️ Inventory was never consumed for order ${order.orderNumber}, skipping restock`);
-    }
-
-    // Update order
-    order.status = newStatus;
-    order.cancelledAt = new Date();
-    order.cancelReason = reason || "Cancelled by admin";
-    await order.save({ session });
+    const { fromStatus } = await approveCancelDecision({
+      order,
+      reason,
+      adminId: req.user?._id,
+      requirePendingRequest: isApprovalMode,
+      session
+    });
 
     await session.commitTransaction();
+
+    await emitOrderLifecycleEvent("ORDER_CANCELLED", {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      userId: order.userId?.toString(),
+      fromStatus,
+      toStatus: order.status,
+      reason: reason || "Cancelled by admin"
+    });
+
+    const refundResult = await initiateCancelRefund({
+      order,
+      reason,
+      actorId: req.user?._id
+    });
 
     console.log(`✅ Order ${order.orderNumber} cancelled, stock restored`);
 
@@ -53,12 +121,17 @@ export const cancelOrder = async (req, res) => {
       orderNumber: order.orderNumber,
       status: order.status,
       cancelledAt: order.cancelledAt,
-      cancelReason: order.cancelReason
+      cancelReason: order.cancelReason,
+      refund: refundResult
     });
 
   } catch (error) {
     await session.abortTransaction();
     console.error("Cancel Order Error:", error);
+
+    if (error.message.includes("No pending cancellation request")) {
+      return res.status(400).json({ message: error.message });
+    }
 
     if (error.message.includes("Invalid Order transition")) {
       return res.status(400).json({ 
@@ -69,6 +142,58 @@ export const cancelOrder = async (req, res) => {
     return res.status(500).json({ message: error.message });
   } finally {
     session.endSession();
+  }
+};
+
+/**
+ * APPROVE CANCEL REQUEST (Admin)
+ */
+export const approveCancelRequest = async (req, res) => {
+  req.approvalMode = true;
+  return cancelOrder(req, res);
+};
+
+/**
+ * REJECT CANCEL REQUEST (Admin)
+ */
+export const rejectCancelRequest = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason } = req.body;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    await rejectRequestDecision({
+      order,
+      requestType: "cancel",
+      reason,
+      adminId: req.user?._id
+    });
+
+    await emitOrderLifecycleEvent("ORDER_CANCEL_REQUEST_REJECTED", {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      userId: order.userId?.toString(),
+      reason
+    });
+
+    return res.json({
+      message: "Cancellation request rejected",
+      orderNumber: order.orderNumber,
+      requestStatus: order.cancelRequest.status
+    });
+  } catch (error) {
+    console.error("Reject Cancel Request Error:", error);
+
+    if (error.message.includes("No pending cancellation request")) {
+      return res.status(400).json({ message: error.message });
+    }
+
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -149,19 +274,40 @@ export const updateOrderStatus = async (req, res) => {
       });
     }
 
-    const newStatus = transitionOrder(order.status, status);
-    order.status = newStatus;
+    let updatedOrder = null;
 
-    if (newStatus === "DELIVERED") {
-      order.deliveredAt = new Date();
+    if (status === "SHIPPED") {
+      updatedOrder = await markShipped({
+        orderId,
+        metadata: {
+          location: "Warehouse",
+          finalAmount: order.finalAmount,
+          xpEarned: order.xpEarned || 0
+        },
+        changedBy: req.user?._id,
+        reason: "Admin marked order as shipped"
+      });
+    } else if (status === "DELIVERED") {
+      updatedOrder = await markDelivered({
+        orderId,
+        metadata: {
+          location: "Customer Address",
+          finalAmount: order.finalAmount,
+          xpEarned: order.xpEarned || 0
+        },
+        changedBy: req.user?._id,
+        reason: "Admin marked order as delivered"
+      });
+    } else {
+      return res.status(400).json({
+        message: "Only SHIPPED and DELIVERED status updates are supported via this endpoint"
+      });
     }
 
-    await order.save();
-
     return res.json({
-      message: `Order status updated to ${newStatus}`,
-      orderNumber: order.orderNumber,
-      status: order.status
+      message: `Order status updated to ${updatedOrder.status}`,
+      orderNumber: updatedOrder.orderNumber,
+      status: updatedOrder.status
     });
   } catch (error) {
     console.error("Update Order Status Error:", error);
@@ -247,6 +393,7 @@ export const collectCOD = async (req, res) => {
  */
 export const initiateRefund = async (req, res) => {
   const session = await mongoose.startSession();
+  const isApprovalMode = req.approvalMode === true;
 
   try {
     session.startTransaction();
@@ -260,9 +407,8 @@ export const initiateRefund = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // 1️⃣ State machine: CONFIRMED or DELIVERED → REFUND_INITIATED
+    // 1️⃣ Capture previous status for refund strategy
     const previousStatus = order.status;
-    const newStatus = transitionOrder(order.status, "REFUND_INITIATED");
 
     // 2️⃣ Fetch payment record
     const payment = await Payment.findById(order.paymentId).session(session);
@@ -341,34 +487,22 @@ export const initiateRefund = async (req, res) => {
     // 5️⃣ Call Razorpay refund API (direct REST call for reliability)
     let razorpayRefund;
     try {
-      const keyId = process.env.RAZORPAY_KEY_ID;
-      const keySecret = process.env.RAZORPAY_KEY_SECRET;
-      const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+      const result = await initiateGatewayRefund({
+        paymentId: payment._id,
+        orderId: order._id,
+        refundAmount: razorpayRefundAmount,
+        reason: reason || "Admin initiated refund",
+        session
+      });
 
-      const refundRes = await fetch(
-        `https://api.razorpay.com/v1/payments/${payment.gatewayPaymentId}/refund`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Basic ${auth}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ amount: amountInPaise })
-        }
-      );
-
-      const refundBody = await refundRes.json();
-      console.log("📋 Razorpay refund response:", refundRes.status, JSON.stringify(refundBody, null, 2));
-
-      if (!refundRes.ok) {
+      if (result.alreadyRequested || result.alreadyProcessed) {
         await session.abortTransaction();
-        return res.status(502).json({
-          message: "Razorpay refund failed",
-          error: refundBody.error?.description || "Unknown Razorpay error"
+        return res.status(400).json({
+          message: "Refund already initiated or processed"
         });
       }
 
-      razorpayRefund = refundBody;
+      razorpayRefund = result.refund;
     } catch (razorpayError) {
       console.error("❌ Razorpay refund API failed:", razorpayError.message, razorpayError.stack);
       await session.abortTransaction();
@@ -378,35 +512,34 @@ export const initiateRefund = async (req, res) => {
       });
     }
 
-    // 6️⃣ Restock inventory if order was CONFIRMED (not yet delivered to customer)
+    // 6️⃣ Restock inventory if order was CONFIRMED (not yet delivered)
     if (previousStatus === "CONFIRMED" && order.inventoryConsumed) {
       await restockOnCancel(order, session);
       order.inventoryConsumed = false;
       console.log(`📦 Stock restored for refunded order ${order.orderNumber}`);
     }
 
-    // 7️⃣ Update payment record
-    payment.refundStatus = "REQUESTED";
-    payment.refundId = razorpayRefund.id;
-    payment.refundAmount = refundAmount;
-    payment.refundReason = reason || "Admin initiated refund";
-    payment.refundInitiatedAt = new Date();
-    await payment.save({ session });
+    // payment record updated inside refund service
 
-    await logPaymentAudit({
-      payment,
-      fromStatus: "NONE",
-      toStatus: "REQUESTED",
-      source: "ADMIN_REFUND"
+    // 8️⃣ Update order status via centralized lifecycle transition
+    const { toStatus } = await applyRefundTransition({
+      order,
+      reason,
+      adminId: req.user?._id,
+      session,
+      requirePendingRequest: isApprovalMode
     });
 
-    // 8️⃣ Update order status
-    order.status = newStatus;
-    order.refundReason = reason || "Admin initiated refund";
-    order.refundInitiatedAt = new Date();
-    await order.save({ session });
-
     await session.commitTransaction();
+
+    await emitOrderLifecycleEvent("ORDER_REFUND_INITIATED", {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      userId: order.userId?.toString(),
+      status: toStatus,
+      refundId: razorpayRefund.id,
+      refundAmount
+    });
 
     console.log(`💸 Refund initiated for order ${order.orderNumber}, Razorpay refund ID: ${razorpayRefund.id}`);
 
@@ -415,7 +548,7 @@ export const initiateRefund = async (req, res) => {
       orderNumber: order.orderNumber,
       previousStatus,
       status: order.status,
-      refundId: razorpayRefund.id,
+      refundId: razorpayRefund?.id,
       razorpayRefundAmount: razorpayRefundAmount,
       totalRefundAmount: refundAmount,
       note: "Razorpay will process online refund in 5-7 business days"
@@ -433,6 +566,10 @@ export const initiateRefund = async (req, res) => {
     await session.abortTransaction();
     console.error("Initiate Refund Error:", error);
 
+    if (error.message.includes("No pending refund request")) {
+      return res.status(400).json({ message: error.message });
+    }
+
     if (error.message.includes("Invalid Order transition")) {
       return res.status(400).json({ message: error.message });
     }
@@ -440,6 +577,58 @@ export const initiateRefund = async (req, res) => {
     return res.status(500).json({ message: error.message });
   } finally {
     session.endSession();
+  }
+};
+
+/**
+ * APPROVE REFUND REQUEST (Admin)
+ */
+export const approveRefundRequest = async (req, res) => {
+  req.approvalMode = true;
+  return initiateRefund(req, res);
+};
+
+/**
+ * REJECT REFUND REQUEST (Admin)
+ */
+export const rejectRefundRequest = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason } = req.body;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    await rejectRequestDecision({
+      order,
+      requestType: "refund",
+      reason,
+      adminId: req.user?._id
+    });
+
+    await emitOrderLifecycleEvent("ORDER_REFUND_REQUEST_REJECTED", {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      userId: order.userId?.toString(),
+      reason
+    });
+
+    return res.json({
+      message: "Refund request rejected",
+      orderNumber: order.orderNumber,
+      requestStatus: order.refundRequest.status
+    });
+  } catch (error) {
+    console.error("Reject Refund Request Error:", error);
+
+    if (error.message.includes("No pending refund request")) {
+      return res.status(400).json({ message: error.message });
+    }
+
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -457,16 +646,17 @@ export const confirmRefund = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // State machine: only REFUND_INITIATED → REFUNDED
-    const newStatus = transitionOrder(order.status, "REFUNDED");
-
     const payment = await Payment.findById(order.paymentId);
     if (!payment) {
       return res.status(404).json({ message: "Payment record not found" });
     }
 
-    // Idempotency: already refunded
-    if (payment.refundStatus === "PROCESSED") {
+    const confirmResult = await confirmGatewayRefund({
+      paymentId: payment._id,
+      session: null
+    });
+
+    if (confirmResult.alreadyProcessed) {
       return res.json({ 
         message: "Refund already confirmed",
         orderNumber: order.orderNumber,
@@ -474,45 +664,20 @@ export const confirmRefund = async (req, res) => {
       });
     }
 
-    // Verify with Razorpay that refund is actually processed
-    if (payment.refundId) {
-      try {
-        const refundDetails = await razorpay.refunds.fetch(payment.refundId);
-        if (refundDetails.status !== "processed") {
-          return res.status(400).json({ 
-            message: `Refund not yet processed by Razorpay. Current status: ${refundDetails.status}` 
-          });
-        }
-      } catch (err) {
-        console.error("⚠️ Could not verify refund status with Razorpay:", err.message);
-        // Continue if admin confirms manually
-      }
-    }
-
-    // Update payment
-    payment.refundStatus = "PROCESSED";
-    payment.refundProcessedAt = new Date();
-    await payment.save();
-
-    await logPaymentAudit({
-      payment,
-      fromStatus: "REQUESTED",
-      toStatus: "PROCESSED",
-      source: "ADMIN_CONFIRM_REFUND"
+    const updatedOrder = await completeRefund({
+      orderId,
+      changedBy: req.user?._id,
+      reason: "Refund confirmed",
+      metadata: { location: "System" }
     });
 
-    // Update order
-    order.status = newStatus;
-    order.refundedAt = new Date();
-    await order.save();
-
-    console.log(`✅ Refund confirmed for order ${order.orderNumber}`);
+    console.log(`✅ Refund confirmed for order ${updatedOrder.orderNumber}`);
 
     return res.json({
       message: "Refund confirmed",
-      orderNumber: order.orderNumber,
-      status: order.status,
-      refundedAt: order.refundedAt
+      orderNumber: updatedOrder.orderNumber,
+      status: updatedOrder.status,
+      refundedAt: updatedOrder.refundedAt
     });
 
   } catch (error) {

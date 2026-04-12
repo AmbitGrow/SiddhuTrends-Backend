@@ -1,0 +1,43 @@
+name: Integrity Tests
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/**
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  integrity:
+    name: Run Integrity Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ensure MONGO_URI secret exists
+        run: |
+          if [ -z "${MONGO_URI}" ]; then
+            echo "MONGO_URI GitHub secret is not configured."
+            echo "Set Settings > Secrets and variables > Actions > New repository secret > MONGO_URI"
+            exit 1
+          fi
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+
+      - name: Run integrity tests
+        run: npm run test:integrity
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
