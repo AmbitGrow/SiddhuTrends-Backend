@@ -8,6 +8,8 @@ import {
   getAllProductsAdmin,
   getProductByIdAdmin,
   updateProductStock,
+  deleteProductAdmin,
+  // getLowStockProducts
 } from "../controllers/product.controller.js";
 
 import {
@@ -21,7 +23,7 @@ import {
   createAgeGroup,
   getAllAgeGroupsAdmin,
   updateAgeGroup,
-  toggleAgeGroupStatus
+  toggleAgeGroupStatus,
 } from "../controllers/ageGroup.controller.js";
 
 import {
@@ -55,6 +57,12 @@ router.get(
   protectRoute,
   adminRoute,
   getProductByIdAdmin,
+);
+router.delete(
+  "/product/delete/:productId",
+  protectRoute,
+  adminRoute,
+  deleteProductAdmin,
 );
 router.patch(
   "/products/:productId/stock",
@@ -90,20 +98,59 @@ router.patch(
 
 router.post("/age-groups", protectRoute, adminRoute, validate(ageGroupSchemas.createAgeGroup), createAgeGroup);
 router.get("/age-groups", protectRoute, adminRoute, getAllAgeGroupsAdmin);
-router.put(
-  "/age-groups/:ageGroupId",
+router.put("/age-groups/:ageGroupId", protectRoute, adminRoute, updateAgeGroup);
+router.patch(
+  "/age-groups/:ageGroupId/status",
   protectRoute,
   adminRoute,
   validate(ageGroupSchemas.updateAgeGroup),
   updateAgeGroup
 );
-router.patch(
-  "/age-groups/:ageGroupId/status",
+
+router.get("/users", protectRoute, adminRoute, getUsers);
+router.patch("/users/:id/status", protectRoute, adminRoute, toggleUserStatus);
+router.patch("/users/:id/delete", protectRoute, adminRoute, softDeleteUser);
+router.patch("/users/:id/reset-risk", protectRoute, adminRoute, resetRiskScore);
+router.get("/users/:id", protectRoute, adminRoute, getSingleUser);
+
+router.get("/security/locked", protectRoute, adminRoute, getLockedAccounts);
+router.get("/security/ips", protectRoute, adminRoute, getBlacklistedIPs);
+router.get("/security/events", protectRoute, adminRoute, getSecurityEvents);
+
+router.get("/dashboard/summary", protectRoute, adminRoute, getDashboardSummary);
+router.get(
+  "/dashboard/category-distribution",
   protectRoute,
   adminRoute,
-  validate(ageGroupSchemas.toggleStatus),
-  toggleAgeGroupStatus
+  getCategoryDistribution,
 );
+router.get(
+  "/dashboard/low-stock-alerts",
+  protectRoute,
+  adminRoute,
+  getLowStockProducts,
+);
+router.get(
+  "/dashboard/stock-overview",
+  protectRoute,
+  adminRoute,
+  getStockOverview,
+);
+
+router.get("/orders/", protectRoute, adminRoute, getAllOrders);
+router.get("/orders/stats/overview", protectRoute, adminRoute, getOrderStats);
+router.get("/orders/:id", protectRoute, adminRoute, getOrderById);
+router.put("/orders/:id/status", protectRoute, adminRoute, updateOrderStatus);
+router.put("/orders/:id/refund", protectRoute, adminRoute, refundOrder);
+
+router.get("/analytics/revenue", protectRoute, adminRoute, getRevenueAnalytics);
+router.get(
+  "/analytics/financial",
+  protectRoute,
+  adminRoute,
+  getFinancialAnalytics,
+);
+
 
 // ===== ORDER MANAGEMENT =====
 router.get("/orders", protectRoute, adminRoute, getAllOrders);

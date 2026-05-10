@@ -212,4 +212,12 @@ orderSchema.pre('save', async function() {
   // Note: No next() call needed in async middleware
 });
 
+// Auto-generate orderNumber before saving
+orderSchema.pre('save', async function() {
+  if (!this.orderNumber) {
+    this.orderNumber = generateOrderNumber();
+  }
+  // Note: No next() call needed in async middleware
+});
+
 export default mongoose.model("Order", orderSchema);

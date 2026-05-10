@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema(
     name: {
       type: String,
       required: [true, "Name is required"],
-      trim: true
+      trim: true,
     },
 
     email: {
@@ -14,20 +14,20 @@ const userSchema = new mongoose.Schema(
       required: [true, "Email is required"],
       unique: true,
       lowercase: true,
-      trim: true
+      trim: true,
     },
 
     password: {
       type: String,
       required: [true, "Password is required"],
       minlength: [6, "Password must be at least 6 characters long"],
-      select: false
+      select: false,
     },
 
     role: {
       type: String,
       enum: ["customer", "admin"],
-      default: "customer"
+      default: "customer",
     },
 
     cartItems: [
@@ -35,43 +35,68 @@ const userSchema = new mongoose.Schema(
         product: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Product",
-          required: true
+          required: true,
         },
         quantity: {
           type: Number,
           required: true,
           min: 1,
-          default: 1
-        }
-      }
+          default: 1,
+        },
+      },
     ],
 
     // 🔗 Referral system fields
     referralCode: {
       type: String,
       unique: true,
-      sparse: true
+      sparse: true,
     },
 
     referredBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      default: null
+      default: null,
     },
 
     referralRewardIssued: {
       type: Boolean,
-      default: false
+      default: false,
     },
 
     isActive: {
       type: Boolean,
-      default: true
-    }
+      default: true,
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    lastLoginAt: Date,
+
+    loginAttempts: {
+      type: Number,
+      default: 0,
+    },
+
+    riskScore: {
+      type: Number,
+      default: 0,
+    },
+
+    isFraudSuspected: {
+      type: Boolean,
+      default: false,
+    },
+    accountLockedUntil: {
+      type: Date,
+      default: null,
+    },
   },
   {
-    timestamps: true
-  }
+    timestamps: true,
+  },
 );
 
 // 🔐 Hash password before saving
@@ -81,7 +106,6 @@ userSchema.pre("save", async function () {
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
 });
-
 
 // 🔐 Compare password method
 userSchema.methods.comparePassword = async function (enteredPassword) {

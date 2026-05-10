@@ -24,7 +24,31 @@ export const createCategory = async (req, res) => {
 // GET ALL CATEGORIES (ADMIN)
 export const getAllCategoriesAdmin = async (req, res) => {
   try {
-    const categories = await Category.find().sort({ createdAt: -1 });
+    const categories = await Category.aggregate([
+      {
+        $lookup: {
+          from: "products", // collection name
+          localField: "_id",
+          foreignField: "categoryId",
+          as: "products"
+        }
+      },
+      {
+        $addFields: {
+          productCount: { $size: "$products" }
+        }
+      },
+      {
+        $project: {
+          name: 1,
+          isActive: 1,
+          createdAt: 1,
+          productCount: 1
+        }
+      },
+      { $sort: { createdAt: -1 } }
+    ]);
+
     res.json(categories);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch categories" });

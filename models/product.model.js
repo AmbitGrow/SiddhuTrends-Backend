@@ -33,6 +33,12 @@ const productSchema = new mongoose.Schema(
       min: 0,
     },
 
+    mrp: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
     investmentCost: {
       type: Number,
       required: true,
@@ -56,6 +62,26 @@ const productSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    reservedStock: {
+      type: Number,
+      default: 0,
+    },
+    rating: {
+      type: Number,
+      default: 0,
+    },
+
+    numReviews: {
+      type: Number,
+      default: 0,
+    },
+
+    specifications: [
+      {
+        title: String,
+        value: String,
+      },
+    ],
 
     isBestSeller: {
       type: Boolean,
@@ -71,8 +97,9 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Auto-generate slug before saving if not provided
