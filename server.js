@@ -11,7 +11,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import categoryRoutes from "./routes/category.routes.js";
 import ageGroupRoutes from "./routes/ageGroup.routes.js";
 import orderRoutes from "./routes/order.routes.js";
-import debugRoutes from "./routes/debug.routes.js";
+
 import diagnosticRoutes from "./routes/diagnostic.routes.js";
 import cookieParser from "cookie-parser";
 import "./services/orderPaymentListener.js";
@@ -19,6 +19,8 @@ import "./services/orderLifecycleListener.js";
 import { expireOrderIntents } from "./jobs/expireOrderIntents.job.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { generalLimiter } from "./middleware/rateLimiter.js";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./config/swagger.js";
 dotenv.config();
 
 const app = express();
@@ -26,15 +28,12 @@ const PORT = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.CLIENT_URL,
     credentials: true,
   }),
 );
 
 app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
-	"/api/payments/webhook",
-	express.raw({ type: "application/json" })
-);
 
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
@@ -51,9 +50,11 @@ app.use("/api/age-groups", ageGroupRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api", paymentRoutes);
 
-// Debug routes (disabled in production)
+// API Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// Diagnostic routes (disabled in production)
 if (process.env.NODE_ENV !== "production") {
-  app.use("/api/debug", debugRoutes);
   app.use("/api/diagnostic", diagnosticRoutes);
 }
 
