@@ -1,0 +1,18 @@
+export const ORDER_STATUS = {
+  PENDING: "PENDING",
+  CONFIRMED: "CONFIRMED",
+  SHIPPED: "SHIPPED",
+  DELIVERED: "DELIVERED",
+  CANCELLED: "CANCELLED",
+  REFUNDED: "REFUNDED"
+};
+
+export const ORDER_TYPE = {
+  ONLINE: "ONLINE",
+  PARTIAL_COD: "PARTIAL_COD"
+};
+
+export const ROLE = {
+  USER: "user",
+  ADMIN: "admin"
+};
