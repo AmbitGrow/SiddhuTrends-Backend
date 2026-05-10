@@ -1,7 +1,8 @@
 import Product from "../models/product.model.js";
 import Category from "../models/category.model.js";
 import AgeGroup from "../models/ageGroup.model.js";
-import slugify from "slugify";
+import Inventory from "../models/inventory.model.js";
+import mongoose from "mongoose";
 
 // =============== CREATE PRODUCT (ADMIN) ===============
 export const createProduct = async (req, res) => {
@@ -71,48 +72,44 @@ export const createProduct = async (req, res) => {
       });
     }
 
-    // ================= SLUG GENERATION =================
+    // Use transaction to create both product and inventory atomically
+    const session = await mongoose.startSession();
+    
+    try {
+      session.startTransaction();
 
-    const baseSlug = slugify(name, { lower: true, strict: true });
-    let slug = baseSlug;
+      const product = await Product.create([{
+        name,
+        description,
+        images: images || [],
+        price,
+        investmentCost,
+        categoryId,
+        ageGroupId,
+        stock,
+        isBestSeller: isBestSeller || false,
+        isOffer: isOffer || false,
+      }], { session });
 
-    const existingSlug = await Product.findOne({ slug });
-    if (existingSlug) {
-      slug = `${baseSlug}-${Date.now()}`;
+      // Auto-create inventory record with initial stock
+      await Inventory.create([{
+        productId: product[0]._id,
+        totalStock: stock,
+        reservedStock: 0
+      }], { session });
+
+      await session.commitTransaction();
+
+      res.status(201).json({
+        message: "Product created successfully",
+        product: product[0],
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      throw transactionError;
+    } finally {
+      session.endSession();
     }
-
-    // ================= DISCOUNT CALCULATION (OPTIONAL) =================
-
-    let discountPercentage = 0;
-
-    if (mrp && mrp > price) {
-      discountPercentage = Math.round(((mrp - price) / mrp) * 100);
-    }
-
-    // ================= CREATE PRODUCT =================
-
-    const product = await Product.create({
-      name,
-      slug,
-      description: description || "",
-      images: images || [],
-      price,
-      mrp,
-      investmentCost,
-      categoryId,
-      ageGroupId,
-      stock,
-      specifications: specifications || [],
-      discountPercentage,
-      isBestSeller: isBestSeller || false,
-      isOffer: isOffer || false,
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: "Product created successfully",
-      product,
-    });
   } catch (err) {
     console.error("Create Product Error:", err);
     return res.status(500).json({
@@ -375,13 +372,42 @@ export const updateProductStock = async (req, res) => {
         .json({ message: "Provide either stock or change value" });
     }
 
-    product.stock = newStock;
-    await product.save();
+    // Use transaction to keep Product.stock and Inventory.totalStock in sync
+    const session = await mongoose.startSession();
+    
+    try {
+      session.startTransaction();
 
-    return res.json({
-      message: "Stock updated successfully",
-      stock: product.stock,
-    });
+      product.stock = newStock;
+      await product.save({ session });
+
+      // Update inventory totalStock to match
+      const inventory = await Inventory.findOne({ productId: product._id }).session(session);
+      
+      if (inventory) {
+        inventory.totalStock = newStock;
+        await inventory.save({ session });
+      } else {
+        // Create inventory if it doesn't exist (for legacy products)
+        await Inventory.create([{
+          productId: product._id,
+          totalStock: newStock,
+          reservedStock: 0
+        }], { session });
+      }
+
+      await session.commitTransaction();
+
+      return res.json({
+        message: "Stock updated successfully",
+        stock: product.stock,
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      throw transactionError;
+    } finally {
+      session.endSession();
+    }
   } catch (err) {
     console.error("Stock Update Error:", err);
     return res.status(500).json({ message: "Failed to update stock" });

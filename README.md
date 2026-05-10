@@ -82,17 +82,14 @@ PORT=5000
 NODE_ENV=production
 CLIENT_URL=http://localhost:5173
 
-MONGO_URI=mongodb+srv://smanishwar6_db_user:rrBS0fGRP2vHu6RK@cluster0.xs6h3bb.mongodb.net/?appName=Cluster0
-
+MONGO_URI=
 UPSTASH_REDIS_URL=redis://127.0.0.1:6379
 
-ACCESS_TOKEN_SECRET=sdfaehfu8r32aw783k4jkjk@!kjhwer
-REFRESH_TOKEN_SECRET=2eoi3n@oweuf89a7Ln3uaksduhfa-w
+ACCESS_TOKEN_SECRET=
+REFRESH_TOKEN_SECRET=
 
 
-# mongodb+srv://smanishwar6_db_user:<db_password>@cluster0.ziuuaup.mongodb.net/?appName=Cluster0
 
-# rrBS0fGRP2vHu6RK
 
 
 ```
@@ -219,7 +216,26 @@ http://localhost:5000
 npm run dev     - Run application using nodemon
 npm start       - Start application normally
 npm test        - Run tests (if configured)
+npm run test:integrity - Run transaction and concurrency integrity suite
 ```
+
+---
+
+## CI Integrity Workflow
+
+GitHub Actions workflow:
+
+```
+.github/workflows/integrity-tests.yml
+```
+
+Required repository secret:
+
+```
+MONGO_URI
+```
+
+Without `MONGO_URI`, the CI job fails fast with setup instructions.
 
 ---
 

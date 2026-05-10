@@ -1,5 +1,6 @@
 import express from "express";
 import { protectRoute } from "../middleware/auth.middleware.js";
+import { validate, cartSchemas } from "../middleware/validation.js";
 
 import {
   addToCart,
@@ -11,11 +12,11 @@ import {
 
 const router = express.Router();
 
-router.post("/add", protectRoute, addToCart);
+router.post("/add", protectRoute, validate(cartSchemas.addToCart), addToCart);
 
 router.get("/", protectRoute, getCart);
 
-router.patch("/update", protectRoute, updateCartQuantity);
+router.patch("/update", protectRoute, validate(cartSchemas.updateQuantity), updateCartQuantity);
 
 router.delete("/remove/:productId", protectRoute, removeFromCart);
 

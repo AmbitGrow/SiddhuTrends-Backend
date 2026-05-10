@@ -2,37 +2,51 @@ import mongoose from "mongoose";
 import Inventory from "../models/inventory.model.js";
 import InventoryReservation from "../models/inventoryReservation.model.js";
 import InventoryLog from "../models/inventoryLog.model.js";
+import Product from "../models/product.model.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 
 export async function reserveStock({
   orderIntent,
-  items
+  items,
+  session: externalSession
 }) {
-  const session = await mongoose.startSession();
+  // Use external session if provided (for atomic operations), otherwise create new
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
 
   try {
-    session.startTransaction();
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
 
     for (const item of items) {
-      const inventory = await Inventory.findOne(
-        { productId: item.productId },
-        null,
-        { session }
+      // Atomic update with race protection
+      // This ensures check + update happen atomically at DB level
+      const result = await Inventory.findOneAndUpdate(
+        { 
+          productId: item.productId,
+          // Ensure available stock (totalStock - reservedStock) >= requested quantity
+          $expr: { 
+            $gte: [
+              { $subtract: ["$totalStock", "$reservedStock"] }, 
+              item.quantity
+            ] 
+          }
+        },
+        { 
+          $inc: { reservedStock: item.quantity }
+        },
+        { 
+          session, 
+          new: true // Return updated document
+        }
       );
 
-      if (!inventory) {
-        throw new Error("Inventory not found");
+      if (!result) {
+        // This should rarely happen since we validate stock upfront
+        // Only triggers in race conditions or if inventory was deleted mid-transaction
+        throw new Error(`Stock reservation failed for product ${item.productId}. Stock may have been taken by another order.`);
       }
-
-      const available =
-        inventory.totalStock - inventory.reservedStock;
-
-      if (available < item.quantity) {
-        throw new Error("Insufficient stock");
-      }
-
-      inventory.reservedStock += item.quantity;
-      await inventory.save({ session });
 
       await InventoryReservation.create(
         [{
@@ -62,20 +76,29 @@ export async function reserveStock({
     );
     await orderIntent.save({ session });
 
-    await session.commitTransaction();
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
   } catch (err) {
-    await session.abortTransaction();
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
     throw err;
   } finally {
-    session.endSession();
+    if (shouldManageSession) {
+      session.endSession();
+    }
   }
 }
 
-export async function releaseStock(orderIntentId) {
-  const session = await mongoose.startSession();
+export async function releaseStock(orderIntentId, externalSession = null) {
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
 
   try {
-    session.startTransaction();
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
 
     const reservations = await InventoryReservation.find(
       {
@@ -87,14 +110,21 @@ export async function releaseStock(orderIntentId) {
     );
 
     for (const res of reservations) {
-      const inventory = await Inventory.findOne(
-        { productId: res.productId },
-        null,
-        { session }
+      // Atomic decrement of reservedStock
+      const result = await Inventory.findOneAndUpdate(
+        { 
+          productId: res.productId,
+          reservedStock: { $gte: res.quantity } // Safety check
+        },
+        { 
+          $inc: { reservedStock: -res.quantity }
+        },
+        { session, new: true }
       );
 
-      inventory.reservedStock -= res.quantity;
-      await inventory.save({ session });
+      if (!result) {
+        throw new Error(`Cannot release stock for product ${res.productId}`);
+      }
 
       res.status = "RELEASED";
       await res.save({ session });
@@ -110,20 +140,29 @@ export async function releaseStock(orderIntentId) {
       );
     }
 
-    await session.commitTransaction();
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
   } catch (err) {
-    await session.abortTransaction();
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
     throw err;
   } finally {
-    session.endSession();
+    if (shouldManageSession) {
+      session.endSession();
+    }
   }
 }
 
-export async function consumeStock(orderIntentId) {
-  const session = await mongoose.startSession();
+export async function consumeStock(orderIntentId, externalSession = null) {
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
 
   try {
-    session.startTransaction();
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
 
     const reservations = await InventoryReservation.find(
       {
@@ -134,21 +173,50 @@ export async function consumeStock(orderIntentId) {
       { session }
     );
 
+    // Idempotency: if no ACTIVE reservations, stock was already consumed
+    if (reservations.length === 0) {
+      const consumed = await InventoryReservation.countDocuments({
+        orderIntentId,
+        status: "CONSUMED"
+      }).session(session);
+
+      if (consumed > 0) {
+        console.log(`⚠️ consumeStock: already consumed for ${orderIntentId}, skipping (idempotent)`);
+        if (shouldManageSession) {
+          await session.commitTransaction();
+        }
+        return;
+      }
+      throw new Error(`No active reservations found for OrderIntent ${orderIntentId}`);
+    }
+
     for (const res of reservations) {
-      const inventory = await Inventory.findOne(
-        { productId: res.productId },
-        null,
-        { session }
+      // Atomic update: decrement both reserved and total stock in Inventory
+      const result = await Inventory.findOneAndUpdate(
+        { 
+          productId: res.productId,
+          reservedStock: { $gte: res.quantity },
+          totalStock: { $gte: res.quantity }
+        },
+        { 
+          $inc: { 
+            reservedStock: -res.quantity,
+            totalStock: -res.quantity
+          }
+        },
+        { session, new: true }
       );
 
-      inventory.reservedStock -= res.quantity;
-      inventory.totalStock -= res.quantity;
-
-      if (inventory.totalStock < 0) {
-        throw new Error("Stock invariant violated");
+      if (!result) {
+        throw new Error(`Cannot consume stock for product ${res.productId}`);
       }
 
-      await inventory.save({ session });
+      // Sync Product.stock with Inventory.totalStock (bidirectional sync)
+      await Product.findByIdAndUpdate(
+        res.productId,
+        { $inc: { stock: -res.quantity } },
+        { session }
+      );
 
       res.status = "CONSUMED";
       await res.save({ session });
@@ -164,11 +232,76 @@ export async function consumeStock(orderIntentId) {
       );
     }
 
-    await session.commitTransaction();
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
   } catch (err) {
-    await session.abortTransaction();
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
     throw err;
   } finally {
-    session.endSession();
+    if (shouldManageSession) {
+      session.endSession();
+    }
+  }
+}
+
+/**
+ * RESTOCK ON CANCEL
+ * Called when admin cancels a CONFIRMED order (before shipping)
+ * Adds stock back to totalStock (since consumeStock already deducted it)
+ */
+export async function restockOnCancel(order, externalSession = null) {
+  const session = externalSession || await mongoose.startSession();
+  const shouldManageSession = !externalSession;
+
+  try {
+    if (shouldManageSession) {
+      session.startTransaction();
+    }
+
+    for (const item of order.items) {
+      // Atomic: increment totalStock back
+      const result = await Inventory.findOneAndUpdate(
+        { productId: item.productId },
+        { $inc: { totalStock: item.quantity } },
+        { session, new: true }
+      );
+
+      if (!result) {
+        throw new Error(`Inventory record not found for product ${item.productId}`);
+      }
+
+      // Sync Product.stock
+      await Product.findByIdAndUpdate(
+        item.productId,
+        { $inc: { stock: item.quantity } },
+        { session }
+      );
+
+      await InventoryLog.create(
+        [{
+          productId: item.productId,
+          orderIntentId: order.orderIntentId,
+          action: "RESTOCK_CANCEL",
+          quantity: item.quantity
+        }],
+        { session }
+      );
+    }
+
+    if (shouldManageSession) {
+      await session.commitTransaction();
+    }
+  } catch (err) {
+    if (shouldManageSession) {
+      await session.abortTransaction();
+    }
+    throw err;
+  } finally {
+    if (shouldManageSession) {
+      session.endSession();
+    }
   }
 }

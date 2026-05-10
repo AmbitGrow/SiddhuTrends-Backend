@@ -1,16 +1,20 @@
 import express from "express";
 import { initiatePayment, verifyPayment, razorpayWebhook } from "../controllers/payment.controller.js";
 import { protectRoute } from "../middleware/auth.middleware.js";
+import { validate, paymentSchemas } from "../middleware/validation.js";
+import { paymentLimiter, webhookLimiter } from "../middleware/rateLimiter.js";
 
 const router = express.Router();
 
 router.post(
-  "/orders/:orderIntentId/pay",
+  "/payments/orders/:orderIntentId/pay",
   protectRoute,
+  paymentLimiter,
+  validate(paymentSchemas.initiatePayment),
   initiatePayment
 );  
 
-router.post("/verify", verifyPayment);
-router.post("/webhook", razorpayWebhook);
+router.post("/payments/verify", paymentLimiter, validate(paymentSchemas.verifyPayment), verifyPayment);
+router.post("/payments/webhook", webhookLimiter, razorpayWebhook);
 
 export default router;

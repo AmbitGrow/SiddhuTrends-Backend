@@ -5,6 +5,8 @@ import OrderIntent from "../models/orderIntent.model.js"; // assumed
 import WebhookEvent from "../models/webhookEvent.model.js";
 import { logPaymentAudit } from "../utils/paymentAuditLogger.js";
 import { paymentEventEmitter } from "../utils/paymentEvents.js";
+import { transitionOrderIntent } from "../domain/orderIntent.state.js";
+import { createOrderFromPayment } from "../services/orderCreation.service.js";
 
 const ADVANCE_AMOUNT = 199; // fixed advance (LOCKED)
 
@@ -21,6 +23,21 @@ export const initiatePayment = async (req, res) => {
     const orderIntent = await OrderIntent.findById(orderIntentId);
     if (!orderIntent) {
       return res.status(404).json({ message: "OrderIntent not found" });
+    }
+
+    // 1.5️⃣ Check OrderIntent is RESERVED
+    if (orderIntent.status !== "RESERVED") {
+      return res.status(400).json({
+        message: `Order is not ready for payment. Current status: ${orderIntent.status}`
+      });
+    }
+
+    // 🕐 Enhancement 4: Block payment on expired intent
+    if (new Date() > new Date(orderIntent.expiresAt)) {
+      return res.status(400).json({
+        message: "Order intent has expired. Please create a new order.",
+        expired: true
+      });
     }
 
     // 2️⃣ Prevent duplicate payment
@@ -78,6 +95,13 @@ export const initiatePayment = async (req, res) => {
       source: "INITIATE_API"
     });
 
+    // 5.5️⃣ Transition OrderIntent to PAYMENT_IN_PROGRESS
+    orderIntent.status = transitionOrderIntent(
+      orderIntent.status,
+      "PAYMENT_IN_PROGRESS"
+    );
+    await orderIntent.save();
+
     // 6️⃣ Send payload to frontend
     return res.json({
       razorpayOrderId: razorpayOrder.id,
@@ -129,6 +153,12 @@ const verifyPaymentInternal = async (
         toStatus: "FAILED",
         source: "VERIFY_API"
       });
+      
+      console.log("🚨 Emitting PAYMENT_FAILED event (signature mismatch)");
+      paymentEventEmitter.emit("PAYMENT_FAILED", {
+        orderIntentId: payment.orderIntentId.toString()
+      });
+      
       throw new Error("Invalid payment signature");
     }
   }
@@ -147,6 +177,12 @@ const verifyPaymentInternal = async (
       toStatus: "FAILED",
       source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
     });
+    
+    console.log("🚨 Emitting PAYMENT_FAILED event (not captured)");
+    paymentEventEmitter.emit("PAYMENT_FAILED", {
+      orderIntentId: payment.orderIntentId.toString()
+    });
+    
     throw new Error("Payment not captured");
   }
 
@@ -161,6 +197,12 @@ const verifyPaymentInternal = async (
       toStatus: "FAILED",
       source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
     });
+    
+    console.log("🚨 Emitting PAYMENT_FAILED event (amount mismatch)");
+    paymentEventEmitter.emit("PAYMENT_FAILED", {
+      orderIntentId: payment.orderIntentId.toString()
+    });
+    
     throw new Error("Payment amount mismatch");
   }
 
@@ -178,19 +220,38 @@ const verifyPaymentInternal = async (
     source: razorpay_signature ? "VERIFY_API" : "WEBHOOK"
   });
 
-  console.log("PAYMENT_VERIFIED", {
-    orderIntentId: payment.orderIntentId.toString(),
-    amount: paidAmount,
-    paymentType: payment.paymentType
-  });
+  console.log("✅ PAYMENT VERIFIED SUCCESSFULLY");
+  console.log("Payment ID:", payment._id.toString());
+  console.log("OrderIntent ID:", payment.orderIntentId.toString());
+  console.log("Payment Type:", payment.paymentType);
+  console.log("Paid Amount:", paidAmount);
 
-  console.log("🚀 Emitting PAYMENT_VERIFIED event");
-  paymentEventEmitter.emit("PAYMENT_VERIFIED", {
+  console.log("🚀 Emitting PAYMENT_VERIFIED event...");
+  
+  const eventData = {
     orderIntentId: payment.orderIntentId.toString(),
     paymentId: payment._id.toString(),
     amount: payment.paidAmount,
     paymentType: payment.paymentType
+  };
+  
+  console.log("Event data:", JSON.stringify(eventData, null, 2));
+  console.log("Listener count BEFORE emit:", paymentEventEmitter.listenerCount("PAYMENT_VERIFIED"));
+  
+  // Emit event with immediate processing
+  setImmediate(() => {
+    try {
+      paymentEventEmitter.emit("PAYMENT_VERIFIED", eventData);
+      console.log("✅ PAYMENT_VERIFIED event emitted in nextTick");
+    } catch (error) {
+      console.error("❌ Error emitting PAYMENT_VERIFIED:", error);
+    }
   });
+  
+  console.log("✅ Event emission scheduled");
+
+  // Order creation happens via event listener only
+  // No direct creation to avoid race conditions
 
   return payment;
 };
@@ -275,7 +336,21 @@ export const razorpayWebhook = async (req, res) => {
     }
 
     if (event.event === "payment.failed") {
-      console.log("PAYMENT_FAILED", razorpay_payment_id);
+      console.log("PAYMENT_FAILED webhook event", razorpay_payment_id);
+      
+      const payment = await Payment.findOne({
+        gatewayOrderId: razorpay_order_id
+      });
+      
+      if (payment && payment.paymentStatus !== "SUCCESS") {
+        payment.paymentStatus = "FAILED";
+        await payment.save();
+        
+        console.log("🚨 Emitting PAYMENT_FAILED event (webhook failure)");
+        paymentEventEmitter.emit("PAYMENT_FAILED", {
+          orderIntentId: payment.orderIntentId.toString()
+        });
+      }
     }
 
     try {

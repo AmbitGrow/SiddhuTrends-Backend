@@ -1,14 +1,7 @@
-const ALLOWED_TRANSITIONS = {
-  CONFIRMED: ["SHIPPED", "REFUNDED"],
-  SHIPPED: ["DELIVERED"],
-  DELIVERED: [],
-  REFUNDED: []
-};
+import { canTransition } from "../modules/orders/order.state.js";
 
 export function transitionOrder(currentState, nextState) {
-  const allowed = ALLOWED_TRANSITIONS[currentState] || [];
-
-  if (!allowed.includes(nextState)) {
+  if (!canTransition(currentState, nextState)) {
     throw new Error(
       `Invalid Order transition: ${currentState} → ${nextState}`
     );
