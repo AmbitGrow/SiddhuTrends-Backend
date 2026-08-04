@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "sync-inventory": "node scripts/syncInventory.js",
-    "test:integrity": "node scripts/integrityValidation.js"
+    "test:integrity": "node scripts/integrityValidation.js",
+    "scan-ports": "node ../scratch_port_scanner.js"
   },
   "repository": {
     "type": "git",
@@ -22,7 +23,6 @@
   },
   "homepage": "https://github.com/AmbitGrow/SiddhuTrends-Backend#readme",
   "dependencies": {
-    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

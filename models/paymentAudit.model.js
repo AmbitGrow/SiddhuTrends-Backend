@@ -30,6 +30,11 @@ const paymentAuditSchema = new mongoose.Schema({
     ]
   },
 
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+
   createdAt: {
     type: Date,
     default: Date.now

@@ -4,7 +4,26 @@
  */
 
 export const errorHandler = (err, req, res, next) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
   console.error("Error:", err);
+
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      success: false,
+      message: "Malformed JSON payload",
+    });
+  }
+
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({
+      success: false,
+      message: "Request payload too large",
+    });
+  }
 
   // Mongoose validation error
   if (err.name === "ValidationError") {
@@ -59,7 +78,10 @@ export const errorHandler = (err, req, res, next) => {
 
   // Default error
   const statusCode = err.statusCode || 500;
-  const message = err.message || "Internal server error";
+  const message =
+    statusCode >= 500 && process.env.NODE_ENV !== "development"
+      ? "Internal server error"
+      : err.message || "Internal server error";
 
   res.status(statusCode).json({
     success: false,

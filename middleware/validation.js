@@ -33,8 +33,8 @@ export const authSchemas = {
       "string.email": "Invalid email format",
       "any.required": "Email is required"
     }),
-    password: Joi.string().min(6).required().messages({
-      "string.min": "Password must be at least 6 characters",
+    password: Joi.string().min(8).required().messages({
+      "string.min": "Password must be at least 8 characters",
       "any.required": "Password is required"
     })
   }),
@@ -67,6 +67,15 @@ export const cartSchemas = {
   updateQuantity: Joi.object({
     productId: Joi.string().required(),
     quantity: Joi.number().integer().min(1).required()
+  }),
+
+  mergeCart: Joi.object({
+    items: Joi.array().items(
+      Joi.object({
+        productId: Joi.string().required(),
+        quantity: Joi.number().integer().min(1).required()
+      })
+    ).required()
   })
 };
 

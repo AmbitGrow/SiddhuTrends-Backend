@@ -4,7 +4,8 @@ export const logPaymentAudit = async ({
   payment,
   fromStatus,
   toStatus,
-  source
+  source,
+  metadata = null
 }) => {
   await PaymentAudit.create({
     paymentId: payment._id,
@@ -12,6 +13,7 @@ export const logPaymentAudit = async ({
     fromStatus,
     toStatus,
     amount: payment.expectedAmount,
-    source
+    source,
+    metadata
   });
 };

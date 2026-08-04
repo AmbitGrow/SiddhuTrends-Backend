@@ -82,6 +82,8 @@ const orderSchema = new mongoose.Schema({
 
   finalAmount: { type: Number, required: true },
   gstAmount: { type: Number, required: true },
+  subtotal: { type: Number, required: true },
+  deliveryCharge: { type: Number, required: true },
   
   totalInvestment: {
     type: Number,

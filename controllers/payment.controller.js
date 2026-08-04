@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import razorpay from "../config/razorpay.js";
 import Payment from "../models/payment.model.js";
-import OrderIntent from "../models/orderIntent.model.js"; // assumed
+import OrderIntent from "../models/orderIntent.model.js";
+import InventoryReservation from "../models/inventoryReservation.model.js";
 import WebhookEvent from "../models/webhookEvent.model.js";
 import { logPaymentAudit } from "../utils/paymentAuditLogger.js";
 import { paymentEventEmitter } from "../utils/paymentEvents.js";
@@ -95,7 +96,16 @@ export const initiatePayment = async (req, res) => {
       source: "INITIATE_API"
     });
 
-    // 5.5️⃣ Transition OrderIntent to PAYMENT_IN_PROGRESS
+    // 5.5️⃣ Extend the reservation window by 10 minutes
+    const newExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    orderIntent.expiresAt = newExpiry;
+
+    await InventoryReservation.updateMany(
+      { orderIntentId: orderIntent._id, status: "ACTIVE" },
+      { $set: { expiresAt: newExpiry } }
+    );
+
+    // Transition OrderIntent to PAYMENT_IN_PROGRESS
     orderIntent.status = transitionOrderIntent(
       orderIntent.status,
       "PAYMENT_IN_PROGRESS"
@@ -206,6 +216,56 @@ const verifyPaymentInternal = async (
     throw new Error("Payment amount mismatch");
   }
 
+  const orderIntent = await OrderIntent.findById(payment.orderIntentId);
+  if (!orderIntent) {
+    throw new Error("OrderIntent not found for this payment");
+  }
+
+  const isIntentExpired = orderIntent.status === "EXPIRED" || 
+                         orderIntent.status === "CANCELLED" || 
+                         new Date() > new Date(orderIntent.expiresAt);
+
+  if (isIntentExpired) {
+    console.error(`🚨 DETECTED ORPHANED PAYMENT: OrderIntent ${orderIntent._id} is ${orderIntent.status || 'expired'}!`);
+    
+    payment.gatewayPaymentId = razorpay_payment_id;
+    payment.paidAmount = paidAmount;
+    payment.paymentStatus = "ORPHANED";
+    payment.verifiedAt = new Date();
+    await payment.save();
+
+    await logPaymentAudit({
+      payment,
+      fromStatus: "PENDING",
+      toStatus: "ORPHANED",
+      source: razorpay_signature ? "VERIFY_API" : "WEBHOOK",
+      metadata: { reason: `OrderIntent status is ${orderIntent.status || 'expired'}` }
+    });
+
+    console.log("🚀 Emitting PAYMENT_ORPHANED event...");
+    const eventData = {
+      paymentId: payment._id.toString(),
+      orderIntentId: payment.orderIntentId.toString(),
+      paidAmount: paidAmount,
+      gatewayPaymentId: razorpay_payment_id,
+      reason: `OrderIntent is ${orderIntent.status || 'expired'}`
+    };
+
+    setImmediate(() => {
+      try {
+        paymentEventEmitter.emit("PAYMENT_ORPHANED", eventData);
+        console.log("✅ PAYMENT_ORPHANED event emitted in nextTick");
+      } catch (error) {
+        console.error("❌ Error emitting PAYMENT_ORPHANED:", error);
+      }
+    });
+
+    throw {
+      status: 410,
+      message: "Order session expired. Payment has been automatically refunded. Please try again."
+    };
+  }
+
   payment.gatewayPaymentId = razorpay_payment_id;
   payment.paidAmount = paidAmount;
   payment.paymentStatus = "SUCCESS";
@@ -287,8 +347,9 @@ export const verifyPayment = async (req, res) => {
 
   } catch (error) {
     console.error("Verify Payment Error:", error);
-    return res.status(500).json({
-      message: "Payment verification failed"
+    const status = error.status || 500;
+    return res.status(status).json({
+      message: error.message || "Payment verification failed"
     });
   }
 };

@@ -40,6 +40,28 @@ import {
   confirmRefund
 } from "../controllers/adminOrder.controller.js";
 
+import {
+  getUsers,
+  toggleUserStatus,
+  softDeleteUser,
+  resetRiskScore,
+  getSingleUser,
+  getLockedAccounts,
+  getBlacklistedIPs,
+  getSecurityEvents,
+  getDashboardSummary,
+  getCategoryDistribution,
+  getLowStockProducts,
+  getStockOverview,
+  getOrderStats,
+  refundOrder
+} from "../controllers/admin.controller.js";
+
+import {
+  getRevenueAnalytics,
+  getFinancialAnalytics
+} from "../controllers/analytics.controller.js";
+
 const router = express.Router();
 
 
@@ -103,8 +125,8 @@ router.patch(
   "/age-groups/:ageGroupId/status",
   protectRoute,
   adminRoute,
-  validate(ageGroupSchemas.updateAgeGroup),
-  updateAgeGroup
+  validate(ageGroupSchemas.toggleStatus),
+  toggleAgeGroupStatus
 );
 
 router.get("/users", protectRoute, adminRoute, getUsers);

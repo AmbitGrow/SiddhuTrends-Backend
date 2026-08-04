@@ -1,6 +1,5 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.model.js";
-import rateLimit from "express-rate-limit";
 
 export const protectRoute = async (req, res, next) => {
   try {
@@ -35,7 +34,7 @@ export const protectRoute = async (req, res, next) => {
       throw error;
     }
   } catch (error) {
-    console.log("Error in protectRoute middleware", error.message);
+    console.error("Error in protectRoute middleware", error.message);
     return res
       .status(401)
       .json({ message: "Unauthorized - Invalid access token" });
@@ -51,13 +50,3 @@ export const adminRoute = (req, res, next) => {
       .json({ message: "Access denied - Admin only" });
   }
 };
-
-export const loginRateLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 20, // max 20 requests per IP
-  message: {
-    message: "Too many login attempts. Please try again later."
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});

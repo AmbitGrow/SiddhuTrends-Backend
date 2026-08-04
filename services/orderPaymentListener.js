@@ -134,6 +134,44 @@ paymentEventEmitter.on("PAYMENT_FAILED", async (data) => {
   }
 });
 
+/**
+ * PAYMENT_ORPHANED Handler
+ * Handles orphaned payments by initiating automatic refund, auditing, and admin notification.
+ */
+paymentEventEmitter.on("PAYMENT_ORPHANED", async (data) => {
+  try {
+    console.log("=".repeat(60));
+    console.log("🚨 PAYMENT_ORPHANED EVENT RECEIVED");
+    console.log("=".repeat(60));
+    console.log("Event data:", JSON.stringify(data, null, 2));
+
+    const { paymentId, orderIntentId, paidAmount, reason } = data;
+
+    // 1️⃣ Initiate automatic refund via the payments/refund service
+    const { initiateRefund } = await import("../modules/payments/refund.service.js");
+    
+    console.log(`💸 Initiating auto-refund for payment ${paymentId}...`);
+    const refundResult = await initiateRefund({
+      paymentId,
+      refundAmount: paidAmount,
+      reason: reason || "Orphaned payment refund"
+    });
+
+    console.log(`✅ Auto-refund processed: Refund ID = ${refundResult.refund?.id || 'N/A'}`);
+
+    // 2️⃣ Administrator alert / logging system trace
+    console.error(`[ADMIN ALERT] Orphaned Payment Auto-Refunded:
+      - Payment ID: ${paymentId}
+      - OrderIntent ID: ${orderIntentId}
+      - Refund ID: ${refundResult.refund?.id || 'N/A'}
+      - Paid Amount: ₹${paidAmount}
+      - Reason: ${reason}`);
+
+  } catch (error) {
+    console.error("❌ ERROR handling PAYMENT_ORPHANED event:", error);
+  }
+});
+
   global.paymentListenersRegistered = true;
   console.log("✅ Payment event listeners registered successfully");
 }

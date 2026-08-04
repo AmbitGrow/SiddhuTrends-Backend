@@ -451,6 +451,8 @@ export const listProducts = async (req, res) => {
     }
 
     const products = await Product.find(filters)
+      .populate("categoryId", "name")
+      .populate("ageGroupId", "label minAge maxAge")
       .skip((page - 1) * limit)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -473,7 +475,9 @@ export const getProductById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const product = await Product.findById(id);
+    const product = await Product.findById(id)
+      .populate("categoryId", "name")
+      .populate("ageGroupId", "label minAge maxAge");
 
     if (!product || !product.isActive) {
       return res.status(404).json({ message: "Product not found" });

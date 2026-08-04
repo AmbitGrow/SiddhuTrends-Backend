@@ -4,6 +4,7 @@ import Order from "../models/order.model.js";
 import Payment from "../models/payment.model.js";
 import OrderItem from "../models/orderItem.model.js";
 import Product from "../models/product.model.js";
+import User from "../models/user.model.js";
 import { consumeStock } from "./inventory.service.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 import generateOrderNumber from "../utils/generateOrderNumber.js";
@@ -170,6 +171,7 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
     // Calculate amounts for COD
     const paidAmount = payment.paidAmount || 0;
     const amountDue = paymentType === "PARTIAL_COD" ? (orderIntent.totalAmount - paidAmount) : 0;
+    const xpEarned = Math.round(orderIntent.totalAmount / 20);
 
     const order = await Order.create([{
       orderNumber,
@@ -181,14 +183,21 @@ export const createOrderFromPayment = async (orderIntentId, paymentId, paymentTy
       items: itemsWithFinancials,
       finalAmount: orderIntent.totalAmount,
       gstAmount: orderIntent.gstAmount,
+      subtotal: orderIntent.subtotal,
+      deliveryCharge: orderIntent.deliveryCharge,
       totalInvestment,
       totalProfit,
       paidAmount: paidAmount,
       amountDue: amountDue,
       deliveryAddress: orderIntent.deliveryAddress,
       inventoryConsumed: true, // Stock was consumed in step 6
-      status: "PENDING_PAYMENT"
+      status: "PENDING_PAYMENT",
+      xpEarned
     }], { session: localSession });
+
+    // Clear user's cart atomically within session
+    await User.findByIdAndUpdate(orderIntent.userId, { $set: { cartItems: [] } }).session(localSession);
+    console.log(`✅ Cart cleared atomically for user ${orderIntent.userId}`);
 
     const confirmedOrder = await confirmOrder({
       orderId: order[0]._id,

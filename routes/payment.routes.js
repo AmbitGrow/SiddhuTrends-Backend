@@ -14,7 +14,13 @@ router.post(
   initiatePayment
 );  
 
-router.post("/payments/verify", paymentLimiter, validate(paymentSchemas.verifyPayment), verifyPayment);
+router.post(
+  "/payments/verify",
+  protectRoute,
+  paymentLimiter,
+  validate(paymentSchemas.verifyPayment),
+  verifyPayment,
+);
 router.post("/payments/webhook", webhookLimiter, razorpayWebhook);
 
 export default router;

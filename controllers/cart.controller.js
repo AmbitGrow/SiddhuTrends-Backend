@@ -1,29 +1,18 @@
 import User from "../models/user.model.js";
 import Product from "../models/product.model.js";
-
-const GST_RATE = 0.18;
-const FREE_DELIVERY_THRESHOLD = 1000;
-const DELIVERY_FEE = 50;
+import { calculateTotals } from "../utils/pricing.js";
 
 const calculateCartTotals = (cartItems) => {
-  let subtotal = 0;
-  let totalQuantity = 0;
+  const items = cartItems.map(item => ({
+    price: item.product?.price ?? 0,
+    quantity: item.quantity
+  }));
 
-  cartItems.forEach((item) => {
-    const price = item.product?.price ?? 0;
-    subtotal += price * item.quantity;
-    totalQuantity += item.quantity;
-  });
-
-  const gstAmount = subtotal * GST_RATE;
-  const deliveryCharge = subtotal >= FREE_DELIVERY_THRESHOLD || subtotal === 0 ? 0 : DELIVERY_FEE;
-  const totalAmount = subtotal + gstAmount + deliveryCharge;
+  const pricingTotals = calculateTotals(items);
+  const totalQuantity = cartItems.reduce((acc, item) => acc + item.quantity, 0);
 
   return {
-    subtotal,
-    gstAmount,
-    deliveryCharge,
-    totalAmount,
+    ...pricingTotals,
     itemCount: cartItems.length,
     totalQuantity
   };
@@ -31,7 +20,14 @@ const calculateCartTotals = (cartItems) => {
 
 const getCartWithTotals = async (userId) => {
   const user = await User.findById(userId)
-    .populate("cartItems.product", "name price images stock isActive");
+    .populate({
+      path: "cartItems.product",
+      select: "name price mrp images stock isActive numReviews ageGroupId",
+      populate: {
+        path: "ageGroupId",
+        select: "label"
+      }
+    });
 
   const cartItems = user?.cartItems || [];
   return {
@@ -254,6 +250,100 @@ export const clearCart = async (req, res) => {
   } catch (err) {
     console.error("Clear Cart Error:", err);
     res.status(500).json({ message: "Failed to clear cart" });
+  }
+};
+
+
+// ================= MERGE CART =================
+export const mergeCart = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { items } = req.body;
+
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ message: "Items must be an array" });
+    }
+
+    const user = await User.findById(userId);
+
+    for (const item of items) {
+      const { productId, quantity } = item;
+      if (!productId || typeof quantity !== "number" || quantity <= 0) continue;
+
+      const product = await Product.findById(productId);
+      if (!product || !product.isActive) continue;
+
+      const existingItem = user.cartItems.find(
+        (dbItem) => dbItem.product.toString() === productId
+      );
+
+      if (existingItem) {
+        const newQty = existingItem.quantity + quantity;
+        existingItem.quantity = Math.min(newQty, product.stock);
+      } else {
+        user.cartItems.push({
+          product: productId,
+          quantity: Math.min(quantity, product.stock)
+        });
+      }
+    }
+
+    await user.save();
+
+    const { cartItems, totals } = await getCartWithTotals(userId);
+
+    res.status(200).json({
+      message: "Cart merged successfully",
+      cart: cartItems,
+      totals
+    });
+  } catch (err) {
+    console.error("Merge Cart Error:", err);
+    res.status(500).json({ message: "Failed to merge cart" });
+  }
+};
+
+
+// ================= GET CART QUOTE =================
+export const getCartQuote = async (req, res) => {
+  try {
+    const { items } = req.body;
+
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ message: "Items must be an array" });
+    }
+
+    const cartItems = [];
+
+    for (const item of items) {
+      const { productId, quantity } = item;
+      if (!productId || typeof quantity !== "number" || quantity <= 0) continue;
+
+      const product = await Product.findById(productId)
+        .select("name price mrp images stock isActive numReviews ageGroupId")
+        .populate({
+          path: "ageGroupId",
+          select: "label"
+        });
+
+      if (!product || !product.isActive) continue;
+
+      cartItems.push({
+        product,
+        quantity: Math.min(quantity, product.stock)
+      });
+    }
+
+    const totals = calculateCartTotals(cartItems);
+
+    res.status(200).json({
+      message: "Cart quote generated successfully",
+      cart: cartItems,
+      totals
+    });
+  } catch (err) {
+    console.error("Get Cart Quote Error:", err);
+    res.status(500).json({ message: "Failed to generate cart quote" });
   }
 };
 

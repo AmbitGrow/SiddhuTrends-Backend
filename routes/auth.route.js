@@ -1,10 +1,13 @@
 import express from "express";
 import { login, logout, signup, refreshToken, getProfile } from "../controllers/auth.controller.js";
 import { protectRoute } from "../middleware/auth.middleware.js";
+import { noStore } from "../middleware/noStore.js";
 import { validate, authSchemas } from "../middleware/validation.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
 
 const router = express.Router();
+
+router.use(noStore);
 
 router.post("/signup", authLimiter, validate(authSchemas.signup), signup);
 router.post("/login", authLimiter, validate(authSchemas.login), login);

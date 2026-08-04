@@ -5,10 +5,12 @@ import Order from "../models/order.model.js";
 import Product from "../models/product.model.js";
 import Inventory from "../models/inventory.model.js";
 import User from "../models/user.model.js";
+import Payment from "../models/payment.model.js";
 
-import { reserveStock } from "../services/inventory.service.js";
+import { reserveStock, releaseStock } from "../services/inventory.service.js";
 import { transitionOrderIntent } from "../domain/orderIntent.state.js";
 import { runTransactionWithRetry } from "../utils/transactionRunner.js";
+import { calculateTotals } from "../utils/pricing.js";
 
 const createOrderIntentInternal = async ({ userId, items, deliveryAddress }) => {
   let orderIntent;
@@ -94,27 +96,20 @@ const createOrderIntentInternal = async ({ userId, items, deliveryAddress }) => 
       }
     }
 
-    let subtotal = 0;
-    let gstAmount = 0;
-
-    const GST_RATE = 0.18;
-
-    for (const item of items) {
+    const pricingItems = items.map(item => {
       const product = productMap.get(item.productId.toString());
-
       if (item.quantity <= 0) {
         throw { status: 400, message: "Invalid quantity" };
       }
+      return {
+        price: product.price,
+        quantity: item.quantity
+      };
+    });
 
-      const basePrice = product.price * item.quantity;
-      const gst = basePrice * GST_RATE;
-
-      subtotal += basePrice;
-      gstAmount += gst;
-    }
-
-    const deliveryCharge = subtotal >= 1000 ? 0 : 50;
-    totalAmount = subtotal + gstAmount + deliveryCharge;
+    const pricingTotals = calculateTotals(pricingItems);
+    const { subtotal, gstAmount, deliveryCharge } = pricingTotals;
+    totalAmount = pricingTotals.totalAmount;
 
     expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -139,7 +134,7 @@ const createOrderIntentInternal = async ({ userId, items, deliveryAddress }) => 
         productId: product._id,
         quantity: item.quantity,
         priceAtPurchase: product.price,
-        gstRateAtPurchase: GST_RATE
+        gstRateAtPurchase: 0.18
       };
     });
 
@@ -151,13 +146,6 @@ const createOrderIntentInternal = async ({ userId, items, deliveryAddress }) => 
       session
     });
   });
-
-  try {
-    await User.findByIdAndUpdate(userId, { cartItems: [] });
-    console.log(`✅ Cart cleared for user ${userId} after order intent creation`);
-  } catch (cartError) {
-    console.error("⚠️ Failed to clear cart:", cartError);
-  }
 
   return { orderIntent, totalAmount, expiresAt };
 };
@@ -420,6 +408,54 @@ export const requestOrderRefund = async (req, res) => {
   } catch (error) {
     console.error("Request Refund Error:", error);
     return res.status(500).json({ message: error.message });
+  }
+};
+
+export const cancelOrderIntent = async (req, res) => {
+  const userId = req.user._id;
+  const { id: orderIntentId } = req.params;
+
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+
+    const orderIntent = await OrderIntent.findOne({ _id: orderIntentId, userId }).session(session);
+    if (!orderIntent) {
+      return res.status(404).json({ message: "OrderIntent not found" });
+    }
+
+    if (orderIntent.status === "CONVERTED") {
+      return res.status(400).json({ message: "Cannot cancel a converted order intent" });
+    }
+
+    if (orderIntent.status === "CANCELLED") {
+      await session.commitTransaction();
+      return res.json({ message: "Order intent already cancelled", orderIntentId });
+    }
+
+    await releaseStock(orderIntent._id, session);
+
+    orderIntent.status = transitionOrderIntent(orderIntent.status, "CANCELLED");
+    await orderIntent.save({ session });
+
+    await Payment.deleteMany({
+      orderIntentId: orderIntent._id,
+      paymentStatus: { $in: ["PENDING", "FAILED"] }
+    }).session(session);
+
+    await session.commitTransaction();
+    console.log(`✅ OrderIntent ${orderIntentId} manually cancelled by user. Stock released and pending payments removed.`);
+    
+    return res.json({
+      message: "Order intent cancelled successfully, stock released",
+      orderIntentId
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Cancel OrderIntent Error:", error);
+    return res.status(500).json({ message: error.message || "Failed to cancel order intent" });
+  } finally {
+    session.endSession();
   }
 };
   
